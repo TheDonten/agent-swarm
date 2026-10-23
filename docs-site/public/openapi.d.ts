@@ -3429,6 +3429,7 @@ export interface paths {
                         sourceTaskId?: string;
                         /** @description Seconds until the request expires. After that the request becomes 'timeout' and you get a hitl-follow-up task. A request with no timeout is cancelled after APPROVAL_REQUEST_AUTO_CANCELLATION_DAYS days (default 7). */
                         timeoutSeconds?: number;
+                        /** @description Where to announce the request. A Slack target (channel or user ID) gets a card with the title, the questions and a link to the dashboard page that answers it. Slack targets need a lead agent caller (403 otherwise). Email is not supported yet and is skipped. */
                         notifications?: {
                             /** @enum {string} */
                             channel: "slack" | "email";
@@ -3521,6 +3522,15 @@ export interface paths {
                 };
                 /** @description Validation error */
                 400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description Slack notifications require a lead agent */
+                403: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -17418,6 +17428,15 @@ export interface paths {
                         "application/json": components["schemas"]["ErrorResponse"];
                     };
                 };
+                /** @description Deferral owned by another agent */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
                 /** @description Schedule not found */
                 404: {
                     headers: {
@@ -17605,6 +17624,15 @@ export interface paths {
                 };
                 /** @description Validation error */
                 400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description Deferral owned by another agent */
+                403: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -18881,6 +18909,8 @@ export interface paths {
                     fields?: "full" | "slim";
                     /** @description mine: owned sessions. shared: sessions shared with me. tree: Sessions that GET /api/session-tree counts: mine plus shared with me, no ownerless roots. A bypass actor sees every root with tree scope. */
                     scope?: "mine" | "shared" | "tree";
+                    /** @description Sessions v2 view, for a user viewer with tree scope. mine (default): roots the user started from a human channel (not workflow, schedule, or system) plus sessions shared with the user. all: every tree session. Lists only: access is unchanged. */
+                    show?: "mine" | "all";
                 };
                 header?: never;
                 path?: never;
@@ -19000,7 +19030,10 @@ export interface paths {
         /** Get session groups and triage counts */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Sessions v2 view, for a user viewer with tree scope. mine (default): roots the user started from a human channel (not workflow, schedule, or system) plus sessions shared with the user. all: every tree session. Lists only: access is unchanged. */
+                    show?: "mine" | "all";
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -22883,6 +22916,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/rbac/roles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List RBAC roles with their verbs */
+        get: operations["rbac_listRoles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/{id}/roles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a user's RBAC roles */
+        get: operations["users_getRbacRoles"];
+        /**
+         * Set a user's RBAC roles
+         * @description Replaces the user's roles. The set holds exactly one of admin, requester, viewer plus any extra roles. Demoting a user below admin removes the ability to answer approval requests, even when the user is listed as an approver. Fails with 409 when it would leave no active admin.
+         */
+        put: operations["users_setRbacRoles"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/whoami": {
         parameters: {
             query?: never;
@@ -23895,6 +23966,15 @@ export interface paths {
                 };
                 /** @description Target or source user not found */
                 404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description Source is the last active admin (last_admin) */
+                409: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -27246,6 +27326,19 @@ export interface components {
             /** @default [] */
             tags: string[];
             createdAt: string;
+        };
+        RbacRole: {
+            id: string;
+            name: string;
+            description: string | null;
+            isBuiltin: boolean;
+            grantsAll: boolean;
+            primary: boolean;
+            verbs: string[];
+        };
+        UserRbacRoles: {
+            userId: string;
+            roles: components["schemas"]["RbacRole"][];
         };
         User: {
             id: string;
@@ -31421,6 +31514,123 @@ export interface operations {
             };
             /** @description Endpoint not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    rbac_listRoles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Role catalog */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        roles: components["schemas"]["RbacRole"][];
+                    };
+                };
+            };
+        };
+    };
+    users_getRbacRoles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The user's roles */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserRbacRoles"];
+                };
+            };
+            /** @description User not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    users_setRbacRoles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    roles: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description The user's roles after the change */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserRbacRoles"];
+                };
+            };
+            /** @description Invalid role set */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not allowed to change roles */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description User not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Would leave no active admin */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
