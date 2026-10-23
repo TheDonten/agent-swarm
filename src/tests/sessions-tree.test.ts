@@ -4,6 +4,7 @@ import { keyPrefixRange, sessionGroupKey } from "../assets/key";
 import {
   closeDb,
   countSessions,
+  createSteeringMessage,
   createTaskExtended,
   createUser,
   getDbClient,
@@ -58,6 +59,7 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   await getDbClient().run("DELETE FROM approval_requests");
+  await getDbClient().run("DELETE FROM task_steering_messages");
   await getDbClient().run("DELETE FROM inbox_item_state");
   await getDbClient().run("DELETE FROM session_shares");
   await getDbClient().run("DELETE FROM agent_tasks");
@@ -195,7 +197,8 @@ describe("chain-wide read state", () => {
       { activity: "2026-10-14T12:00:00.000Z", expected: "read" },
       { status: "dismissed", updated: OLD, expected: "done" },
       { status: "done", updated: NOW, expected: "done" },
-      { status: "done", updated: OLD, expected: "unread" },
+      // Agent activity after the Done mark keeps it Done.
+      { status: "done", updated: OLD, expected: "done" },
       { status: "snoozed", snoozeUntil: "2026-10-22T12:00:00.000Z", expected: "later" },
       { status: "snoozed", snoozeUntil: NOW, expected: "unread" },
       { status: "snoozed", expected: "unread" },
@@ -256,6 +259,145 @@ describe("chain-wide read state", () => {
     const tree = await getSessionTree(actor(), NOW);
     expect(tree.noGroup.total).toBe(1);
     expect(tree.inbox.total).toBe(1);
+  });
+});
+
+describe("Done holds until the session needs the user", () => {
+  const DONE_AT = "2026-10-21T11:00:00.000Z";
+  const BEFORE = "2026-10-21T10:30:00.000Z";
+  const AFTER = "2026-10-21T11:30:00.000Z";
+  const readState = async (id: string) =>
+    (await listRecentSessions(filters({ limit: 100 }))).find((s) => s.root.id === id)?.readState;
+  const doneSession = async () => {
+    const root = await task("shared/", { source: "ui" }, BEFORE);
+    await getDbClient().run(
+      "UPDATE agent_tasks SET createdAt = ?, status = 'in_progress' WHERE id = ?",
+      [BEFORE, root.id],
+    );
+    await state(root.id, "done", DONE_AT);
+    expect(await readState(root.id)).toBe("done");
+    return root;
+  };
+  const child = async (
+    parentTaskId: string,
+    extra: Parameters<typeof createTaskExtended>[1],
+    createdAt = AFTER,
+  ) => {
+    const row = await createTaskExtended("Child", { parentTaskId, key: "shared/", ...extra });
+    await getDbClient().run(
+      "UPDATE agent_tasks SET createdAt = ?, lastUpdatedAt = ?, status = 'completed' WHERE id = ?",
+      [createdAt, createdAt, row.id],
+    );
+    return row;
+  };
+  const approval = async (taskId: string, createdAt: string, status = "pending") =>
+    getDbClient().run(
+      `INSERT INTO approval_requests (id, sourceTaskId, title, questions, approvers, status, createdAt)
+      VALUES (?, ?, 'Approve deploy', '[]', '{}', ?, ?)`,
+      [crypto.randomUUID(), taskId, status, createdAt],
+    );
+
+  test("agent progress and a status change keep it Done", async () => {
+    const root = await doneSession();
+    await getDbClient().run(
+      "UPDATE agent_tasks SET lastUpdatedAt = ?, status = 'completed' WHERE id = ?",
+      [AFTER, root.id],
+    );
+    expect(await readState(root.id)).toBe("done");
+    const tree = await getSessionTree(actor(), NOW);
+    expect(tree.done.total).toBe(1);
+    expect(tree.inbox.total).toBe(0);
+  });
+
+  test("agent-created child and delegated tasks keep it Done", async () => {
+    const root = await doneSession();
+    // Inherits the requester from its parent.
+    const inherited = await child(root.id, { source: "mcp" });
+    // Lead delegation, a deferred wake-up and a follow-up name the requester explicitly.
+    await child(inherited.id, { source: "mcp", requestedByUserId: owner.id });
+    await child(root.id, { source: "schedule", requestedByUserId: owner.id });
+    await child(root.id, { source: "system", requestedByUserId: owner.id });
+    await child(root.id, { source: "workflow", requestedByUserId: owner.id });
+    expect(await readState(root.id)).toBe("done");
+  });
+
+  test("a pending approval created after Done returns it to the Inbox", async () => {
+    const before = await doneSession();
+    await approval(before.id, BEFORE);
+    const resolved = await doneSession();
+    await approval(resolved.id, AFTER, "approved");
+    expect(await readState(before.id)).toBe("done");
+    expect(await readState(resolved.id)).toBe("done");
+
+    const root = await doneSession();
+    const agent = await child(root.id, { source: "mcp" });
+    await approval(agent.id, AFTER);
+    expect(await readState(root.id)).toBe("unread");
+    expect(await ids({ triage: "inbox" })).toEqual([root.id]);
+  });
+
+  test("a human follow-up after Done returns it to the Inbox", async () => {
+    const earlier = await doneSession();
+    await child(earlier.id, { source: "ui", requestedByUserId: owner.id }, BEFORE);
+    expect(await readState(earlier.id)).toBe("done");
+
+    const root = await doneSession();
+    await child(root.id, { source: "ui", requestedByUserId: owner.id });
+    expect(await readState(root.id)).toBe("unread");
+    const slack = await doneSession();
+    await child(slack.id, { source: "slack", requestedByUserId: other.id });
+    expect(await readState(slack.id)).toBe("unread");
+    const tree = await getSessionTree(actor(), NOW);
+    expect(tree.inbox.total).toBe(2);
+    expect(tree.done.total).toBe(1);
+  });
+
+  test("a person's steer or queued message after Done returns it to the Inbox", async () => {
+    // The real writer stamps created_at with the column default, after DONE_AT.
+    const steered = await doneSession();
+    await createSteeringMessage({
+      taskId: steered.id,
+      body: "Change course",
+      mode: "steer",
+      source: "ui",
+      createdByKind: "user",
+      createdByUserId: owner.id,
+    });
+    expect(await readState(steered.id)).toBe("unread");
+
+    const queued = await doneSession();
+    const agent = await child(queued.id, { source: "mcp" });
+    await createSteeringMessage({
+      taskId: agent.id,
+      body: "Also check this",
+      mode: "queue",
+      source: "slack",
+      createdByKind: "user",
+      createdByUserId: owner.id,
+    });
+    expect(await readState(queued.id)).toBe("unread");
+    expect((await ids({ triage: "inbox" })).sort()).toEqual([steered.id, queued.id].sort());
+  });
+
+  test("agent, system, cancelled and earlier steering keep it Done", async () => {
+    const steer = async (
+      taskId: string,
+      createdByKind: "user" | "agent" | "system",
+      createdAt = AFTER,
+      status = "pending",
+    ) =>
+      getDbClient().run(
+        `INSERT INTO task_steering_messages
+          (id, task_id, body, mode, status, source, created_by_kind, created_at)
+        VALUES (?, ?, 'Steer', 'queue', ?, 'mcp', ?, ?)`,
+        [crypto.randomUUID(), taskId, status, createdByKind, createdAt],
+      );
+    const root = await doneSession();
+    await steer(root.id, "agent");
+    await steer(root.id, "system");
+    await steer(root.id, "user", AFTER, "cancelled");
+    await steer(root.id, "user", BEFORE, "handled");
+    expect(await readState(root.id)).toBe("done");
   });
 });
 
@@ -589,6 +731,31 @@ describe("source filter and list triage", () => {
     expect(all.sessions.map((s) => s.root.id).sort()).toEqual(
       [slackA.id, slackB.id, ui.id, chat.id].sort(),
     );
+  });
+
+  test("showSource keeps only the listed sources, and an empty list keeps none", async () => {
+    await task("shared/", { source: "slack" });
+    const ui = await task("shared/a/", { source: "ui" });
+    await task("shared/", { source: "github" });
+
+    const full = await treeOf();
+    const shown = await treeOf("showSource=ui");
+    expect(shown.inbox.total).toBe(1);
+    expect(shown.groups.map((g) => g.key)).toEqual(["shared/a/"]);
+    expect(shown.sources).toEqual(full.sources);
+    const inbox = await listOf("triage=inbox&showSource=ui");
+    expect(inbox.total).toBe(1);
+    expect(inbox.sessions.map((s) => s.root.id)).toEqual([ui.id]);
+
+    const none = await treeOf("showSource=");
+    expect(none.inbox.total).toBe(0);
+    expect(none.sources).toEqual(full.sources);
+    expect((await listOf("triage=inbox&showSource=")).total).toBe(0);
+
+    expect((await triage({ action: "done", triage: "inbox", showSource: ["ui"] })).status).toBe(
+      200,
+    );
+    expect((await listOf("triage=done")).sessions.map((s) => s.root.id)).toEqual([ui.id]);
   });
 
   test("triage by list writes every matching session, honoring the list and the filters", async () => {

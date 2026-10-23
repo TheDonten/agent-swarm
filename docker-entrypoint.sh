@@ -350,7 +350,7 @@ elif [ "$HARNESS_PROVIDER" = "opencode" ]; then
 elif [ "$HARNESS_PROVIDER" = "dsh" ]; then
     DSH_BIN="${DSH_BINARY:-dsh}"
     if ! command -v "$DSH_BIN" >/dev/null 2>&1; then
-        echo "FATAL: dsh CLI not found: '$DSH_BIN'. Use worker-full or install @deepseek-ai/dsh@0.2.1-rc.2 during image provisioning."
+        echo "FATAL: dsh CLI not found: '$DSH_BIN'. Use worker-full or install @deepseek-ai/dsh@0.2.1-rc.3 during image provisioning."
         exit 1
     fi
     echo "dsh CLI: $(command -v "$DSH_BIN")"
@@ -695,7 +695,9 @@ elif [ -n "$GITLAB_TOKEN" ]; then
     # over HTTPS to this host would have none. Same env-reading helper as Azure
     # DevOps below: the token never lands in ~/.gitconfig or a credential store.
     # GitLab accepts any non-empty username with a PAT as the password.
-    git config --global "credential.${GITLAB_HOST%/}.helper" \
+    # --replace-all: a restart or a startup hook's reset + helper pair can leave
+    # several values for this origin, and a plain set fails on those under set -e.
+    git config --global --replace-all "credential.${GITLAB_HOST%/}.helper" \
         '!f() { test "$1" = get || exit 0; echo username=oauth2; echo "password=${GITLAB_TOKEN}"; }; f'
 
     # Set git user config for GitLab commits (use GitLab-specific env vars or fall back to GitHub ones)

@@ -39,6 +39,7 @@ import {
   CommandSeparator,
   CommandShortcut,
 } from "@/components/ui/command";
+import { taskListTitle } from "@/lib/task-title";
 
 interface NavItem {
   label: string;
@@ -224,7 +225,8 @@ export function CommandMenu() {
   }
 
   function taskLabel(task: AgentTask) {
-    return task.task.length > 80 ? `${task.task.slice(0, 80)}...` : task.task;
+    const label = taskListTitle(task);
+    return label.length > 80 ? `${label.slice(0, 80)}...` : label;
   }
 
   return (
@@ -396,7 +398,7 @@ export function CommandMenu() {
                   onSelect={() => handleSelect(`/tasks/${task.id}`)}
                 >
                   <ClipboardList className="h-4 w-4" />
-                  <span className="max-w-[300px] truncate">{task.task}</span>
+                  <span className="max-w-[300px] truncate">{taskListTitle(task)}</span>
                   <span className="ml-auto text-xs text-muted-foreground">{task.status}</span>
                 </CommandItem>
               ))}
