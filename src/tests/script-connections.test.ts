@@ -642,8 +642,8 @@ describe("script connections", () => {
       markMigrationApplied(database, "235_chat_relay_defer.sql");
       // 237 reads approval_requests and inbox_item_state, which this migration-112-only fixture does not create.
       markMigrationApplied(database, "237_session_inbox_cleanup.sql");
-      // 239 alters model_profiles (made by the skipped 220) and scheduled_tasks.
-      markMigrationApplied(database, "239_model_profiles_pr2.sql");
+      // 240 alters model_profiles (made by the skipped 220) and scheduled_tasks.
+      markMigrationApplied(database, "240_model_profiles_pr2.sql");
 
       const id = crypto.randomUUID();
       const now = new Date().toISOString();
