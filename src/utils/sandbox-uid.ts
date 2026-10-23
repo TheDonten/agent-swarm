@@ -27,10 +27,13 @@ function positiveInt(value: string | undefined, fallback: number): number {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-/** At least 1000, so the shared uid (`base - 1`) can never be root or a system uid. */
+/** Lowest accepted base: the shared uid (`base - 1`) stays at 1000 or above. */
+export const MIN_SANDBOX_UID_BASE = 1001;
+
+/** At least 1001, so the shared uid (`base - 1`) can never be root or a system uid. */
 export function sandboxUidBase(): number {
   const base = positiveInt(process.env.SCRIPT_SANDBOX_UID_BASE, DEFAULT_SANDBOX_UID_BASE);
-  return base >= 1000 ? base : DEFAULT_SANDBOX_UID_BASE;
+  return base >= MIN_SANDBOX_UID_BASE ? base : DEFAULT_SANDBOX_UID_BASE;
 }
 
 export function sandboxUidPoolSize(): number {
@@ -207,6 +210,30 @@ export function createSandboxUidPool(opts: {
 
 let defaultPool: SandboxUidPool | undefined;
 let dropCheck: Promise<boolean> | undefined;
+let pinnedBase: number | undefined;
+
+/**
+ * The base read once per process. The pool, the drop check and the shared
+ * workflow uid all use it, so a config reload that changes
+ * `SCRIPT_SANDBOX_UID_BASE` cannot move the shared uid into the pool's range.
+ * A new base takes effect on restart.
+ */
+export function activeSandboxUidBase(): number {
+  pinnedBase ??= sandboxUidBase();
+  return pinnedBase;
+}
+
+/** The fixed uid workflow inline `script` nodes share: one below the pool. */
+export function sharedSandboxUser(): SandboxUser {
+  const id = activeSandboxUidBase() - 1;
+  return { uid: id, gid: id };
+}
+
+export function _resetSandboxUidStateForTests(): void {
+  defaultPool = undefined;
+  dropCheck = undefined;
+  pinnedBase = undefined;
+}
 
 function apiIsRoot(): boolean {
   return process.platform === "linux" && process.getuid?.() === 0;
@@ -250,7 +277,7 @@ export function sandboxUidDropAvailable(): Promise<boolean> {
       .text()
       .catch(() => "");
     if (!hasSandboxUidDropCaps(status)) return false;
-    const base = sandboxUidBase();
+    const base = activeSandboxUidBase();
     return (await exitCode([...setprivPrefix({ uid: base, gid: base }), "true"])) === 0;
   })();
   return dropCheck;
@@ -263,7 +290,10 @@ export function sandboxUidDropAvailable(): Promise<boolean> {
  */
 export async function leaseSandboxUid(signal?: AbortSignal): Promise<SandboxUidLease | null> {
   if (!(await sandboxUidDropAvailable())) return null;
-  defaultPool ??= createSandboxUidPool({ base: sandboxUidBase(), size: sandboxUidPoolSize() });
+  defaultPool ??= createSandboxUidPool({
+    base: activeSandboxUidBase(),
+    size: sandboxUidPoolSize(),
+  });
   return defaultPool.lease(signal);
 }
 
@@ -277,11 +307,15 @@ export async function leaseSandboxUid(signal?: AbortSignal): Promise<SandboxUidL
  */
 export async function leaseSharedSandboxUid(): Promise<SandboxUidLease | null> {
   if (!(await sandboxUidDropAvailable())) return null;
-  const id = sandboxUidBase() - 1;
-  return { user: { uid: id, gid: id }, release: async () => {} };
+  return { user: sharedSandboxUser(), release: async () => {} };
 }
 
-/** Give `path` (recursively) to the sandbox uid so the child can use it. */
+/**
+ * Give `path` (recursively) to the sandbox uid so the child can use it, and
+ * make it private to that uid. chown keeps modes, and an API started with
+ * umask 022 creates 0755 dirs and 0644 files that another sandbox uid could read.
+ */
 export async function chownForSandbox(path: string, user: SandboxUser): Promise<void> {
+  await Bun.$`chmod -R go= ${path}`.quiet();
   await Bun.$`chown -R ${user.uid}:${user.gid} ${path}`.quiet();
 }

@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtemp, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { validateConfigValue } from "../be/swarm-config-guard";
 import {
+  _resetSandboxUidStateForTests,
+  activeSandboxUidBase,
+  chownForSandbox,
   createSandboxUidPool,
   DEFAULT_SANDBOX_UID_BASE,
   hasSandboxUidDropCaps,
@@ -9,6 +16,7 @@ import {
   type SandboxUser,
   sandboxUidBase,
   sandboxUidDropAvailable,
+  sharedSandboxUser,
 } from "../utils/sandbox-uid";
 
 const reaped: SandboxUser[] = [];
@@ -20,6 +28,7 @@ const reap = async (user: SandboxUser): Promise<ReapOutcome> => {
 afterEach(() => {
   reaped.length = 0;
   delete process.env.SCRIPT_SANDBOX_UID_BASE;
+  _resetSandboxUidStateForTests();
 });
 
 describe("sandbox uid pool", () => {
@@ -184,6 +193,53 @@ describe("sandbox uid config", () => {
     process.env.SCRIPT_SANDBOX_UID_BASE = "70000";
     expect(sandboxUidBase()).toBe(70000);
   });
+
+  test("base 1000 is rejected and 1001 accepted, so the shared uid is at least 1000", () => {
+    process.env.SCRIPT_SANDBOX_UID_BASE = "1000";
+    expect(sandboxUidBase()).toBe(DEFAULT_SANDBOX_UID_BASE);
+    process.env.SCRIPT_SANDBOX_UID_BASE = "1001";
+    expect(sandboxUidBase()).toBe(1001);
+    expect(validateConfigValue("SCRIPT_SANDBOX_UID_BASE", "1000")).toContain("1001");
+    expect(validateConfigValue("SCRIPT_SANDBOX_UID_BASE", "1001")).toBeNull();
+  });
+
+  test("a live base change does not move the shared uid into the pool's range", () => {
+    process.env.SCRIPT_SANDBOX_UID_BASE = "61000";
+    expect(activeSandboxUidBase()).toBe(61000);
+    // A config reload rewrites process.env; the pool keeps its startup base.
+    process.env.SCRIPT_SANDBOX_UID_BASE = "61002";
+    expect(activeSandboxUidBase()).toBe(61000);
+    expect(sharedSandboxUser()).toEqual({ uid: 60999, gid: 60999 });
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "chownForSandbox makes the tree private even under umask 022",
+    async () => {
+      const previous = process.umask(0o022);
+      const dir = await mkdtemp(join(tmpdir(), "sandbox-chown-"));
+      try {
+        await Bun.$`mkdir -p ${dir}/run/node_modules/stdlib`;
+        await Bun.write(`${dir}/run/source.ts`, "export default 1;");
+        await Bun.write(`${dir}/run/node_modules/stdlib/index.js`, "");
+        expect((await stat(`${dir}/run`)).mode & 0o777).toBe(0o755);
+        expect((await stat(`${dir}/run/source.ts`)).mode & 0o777).toBe(0o644);
+
+        // chown to our own uid needs no privilege; root does the same for a sandbox uid.
+        const self = { uid: process.getuid?.() ?? 0, gid: process.getgid?.() ?? 0 };
+        await chownForSandbox(`${dir}/run`, self);
+
+        for (const path of ["run", "run/node_modules", "run/node_modules/stdlib"]) {
+          expect((await stat(`${dir}/${path}`)).mode & 0o777).toBe(0o700);
+        }
+        for (const path of ["run/source.ts", "run/node_modules/stdlib/index.js"]) {
+          expect((await stat(`${dir}/${path}`)).mode & 0o777).toBe(0o600);
+        }
+      } finally {
+        process.umask(previous);
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
 
   test.skipIf(process.getuid?.() === 0)(
     "uid drop is unavailable when the API is not root",

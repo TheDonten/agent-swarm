@@ -420,11 +420,11 @@ const VALIDATED_KEYS: Record<string, ConfigValidator> = {
   ...enumValidator("TRANSCRIPTION_PROVIDER", ["openai", "elevenlabs", "groq"]),
   SCRIPT_QUICKJS_POOL_SIZE: validateQuickJSPoolSize,
   // Native script sandbox uids. The base must stay clear of system uids, so
-  // the shared workflow uid (base - 1) is never root.
+  // the shared workflow uid (base - 1) is 1000 or above, never root or a system uid.
   SCRIPT_SANDBOX_UID_BASE: (value) => {
     const str = String(value).trim();
-    if (!/^\d+$/.test(str) || Number(str) < 1000 || Number(str) > 4_000_000_000) {
-      return "Invalid SCRIPT_SANDBOX_UID_BASE (must be a whole uid from 1000 to 4000000000)";
+    if (!/^\d+$/.test(str) || Number(str) < 1001 || Number(str) > 4_000_000_000) {
+      return "Invalid SCRIPT_SANDBOX_UID_BASE (must be a whole uid from 1001 to 4000000000)";
     }
     return null;
   },
