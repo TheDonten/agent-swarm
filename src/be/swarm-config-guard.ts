@@ -417,7 +417,7 @@ const VALIDATED_KEYS: Record<string, ConfigValidator> = {
   },
   ...enumValidator("CLAUDE_TRANSPORT", ["cli", "sdk"]),
   ...enumValidator("SCRIPT_EXECUTOR", ["native", "quickjs"]),
-  ...enumValidator("TRANSCRIPTION_PROVIDER", ["openai", "elevenlabs"]),
+  ...enumValidator("TRANSCRIPTION_PROVIDER", ["openai", "elevenlabs", "groq"]),
   SCRIPT_QUICKJS_POOL_SIZE: validateQuickJSPoolSize,
   // Native script sandbox uids. The base must stay clear of system uids, so
   // the shared workflow uid (base - 1) is never root.
@@ -515,6 +515,7 @@ const VALIDATED_KEYS: Record<string, ConfigValidator> = {
     "GITHUB_DISABLE",
     "GITLAB_DISABLE",
     "AZURE_DEVOPS_DISABLE",
+    "BITBUCKET_DISABLE",
     "LINEAR_DISABLE",
     "JIRA_DISABLE",
     "AGENTMAIL_DISABLE",

@@ -33,6 +33,7 @@ import { loadSecretRegistry } from "../be/secret-registry";
 import { seedLegacyCapabilitiesConfig } from "../be/seed-capabilities";
 import { initApiTelemetry } from "../be/telemetry-enable";
 import { startWorkerNudgeListener } from "../be/worker-nudge-listener";
+import { initBitbucket } from "../bitbucket";
 import {
   loadEnabledExtensions,
   setExtensionLoopbackBaseUrl,
@@ -140,6 +141,7 @@ import { handleTasks } from "./tasks";
 import { handleTelemetryUi } from "./telemetry-ui";
 import { handleTrackers } from "./trackers";
 import { handleUsedBy } from "./used-by";
+import { handleUserRoles } from "./user-roles";
 import { handleUsers } from "./users";
 import {
   getPathSegments,
@@ -405,6 +407,7 @@ const httpServer = createHttpServer(async (req, res) => {
         () => handleRuntimePools(req, res, pathSegments, queryParams, myAgentId),
         () => handleExtensions(req, res, pathSegments, queryParams, myAgentId),
         () => handleFavorites(req, res, pathSegments, queryParams, myAgentId),
+        () => handleUserRoles(req, res, pathSegments, queryParams),
         () => handleUsers(req, res, pathSegments, queryParams),
         () => handleSessions(req, res, pathSegments, queryParams, myAgentId),
         () => handleInboxState(req, res, pathSegments, queryParams),
@@ -807,6 +810,9 @@ httpServer
     // Initialize Azure DevOps service-hook handler (if configured)
     initAzureDevOps();
     initAzureDevOpsOutbound();
+
+    // Initialize Bitbucket Cloud webhook handler (if configured)
+    initBitbucket();
 
     // Initialize AgentMail webhook handler (if configured)
     initAgentMail();

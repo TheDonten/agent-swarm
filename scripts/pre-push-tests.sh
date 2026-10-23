@@ -64,6 +64,7 @@ if [[ "$probe_status" -eq 134 ]]; then
     src/tests/sandbox-seccomp.test.ts \
     src/tests/sandboxed-process.test.ts \
     src/tests/schedule-target-type.test.ts \
+    src/tests/script-api-credential.test.ts \
     src/tests/script-connections-sql.test.ts \
     src/tests/script-connections.test.ts \
     src/tests/script-executor-conformance.test.ts \
@@ -81,6 +82,7 @@ if [[ "$probe_status" -eq 134 ]]; then
     src/tests/workflow-e2e.test.ts \
     src/tests/workflow-engine-v2.test.ts \
     src/tests/workflow-executors.test.ts \
+    src/tests/workflow-foreach-bodies.test.ts \
     src/tests/workflow-swarm-script.test.ts
 elif [[ "$probe_status" -ne 0 ]]; then
   echo "[pre-push-tests] sandbox spawn probe failed unexpectedly with exit $probe_status" >&2

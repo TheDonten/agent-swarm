@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Agent Swarm API",
-    "version": "2.4.4",
+    "version": "2.5.1",
     "description": "Multi-agent orchestration API for Claude Code, Codex, and Gemini CLI. Enables task distribution, agent communication, and service discovery.\n\nMCP tools are documented separately in [MCP.md](./MCP.md)."
   },
   "servers": [
@@ -166,6 +166,7 @@
               "github",
               "gitlab",
               "azure-devops",
+              "bitbucket",
               "agentmail",
               "system",
               "schedule",
@@ -292,7 +293,8 @@
             "enum": [
               "github",
               "gitlab",
-              "azure-devops"
+              "azure-devops",
+              "bitbucket"
             ]
           },
           "vcsRepo": {
@@ -4577,6 +4579,65 @@
           "description",
           "prompt",
           "createdAt"
+        ]
+      },
+      "RbacRole": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "isBuiltin": {
+            "type": "boolean"
+          },
+          "grantsAll": {
+            "type": "boolean"
+          },
+          "primary": {
+            "type": "boolean"
+          },
+          "verbs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "isBuiltin",
+          "grantsAll",
+          "primary",
+          "verbs"
+        ]
+      },
+      "UserRbacRoles": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string"
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RbacRole"
+            }
+          }
+        },
+        "required": [
+          "userId",
+          "roles"
         ]
       },
       "User": {
@@ -12444,7 +12505,8 @@
                         "channel",
                         "target"
                       ]
-                    }
+                    },
+                    "description": "Where to announce the request. A Slack target (channel or user ID) gets a card with the title, the questions and a link to the dashboard page that answers it. Slack targets need a lead agent caller (403 otherwise). Email is not supported yet and is skipped."
                   }
                 },
                 "required": [
@@ -12787,6 +12849,16 @@
           },
           "400": {
             "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Slack notifications require a lead agent",
             "content": {
               "application/json": {
                 "schema": {
@@ -20922,7 +20994,7 @@
       },
       "post": {
         "summary": "Upload a binary task file attachment",
-        "description": "Accepts a raw binary request body. Pass the display/path name as the `name` query parameter.",
+        "description": "Accepts a raw binary request body. Pass the display/path name as the `name` query parameter. An `audio/*` file uploaded to a `draft` task gets a `[File: …]` line and its transcript (or why there is none) appended to the task text before the response; a failed transcription never fails the upload.",
         "tags": [
           "FS"
         ],
@@ -29806,6 +29878,7 @@
                                     "slack",
                                     "github",
                                     "gitlab",
+                                    "bitbucket",
                                     "linear_oauth",
                                     "jira_oauth",
                                     null
@@ -29994,6 +30067,9 @@
                             "gitlab": {
                               "type": "boolean"
                             },
+                            "bitbucket": {
+                              "type": "boolean"
+                            },
                             "linear": {
                               "type": "boolean"
                             },
@@ -30005,6 +30081,7 @@
                             "slack",
                             "github",
                             "gitlab",
+                            "bitbucket",
                             "linear",
                             "jira"
                           ]
@@ -30255,6 +30332,7 @@
                           "slack",
                           "github",
                           "gitlab",
+                          "bitbucket",
                           "linear_oauth",
                           "jira_oauth"
                         ]
@@ -30800,6 +30878,7 @@
                                     "slack",
                                     "github",
                                     "gitlab",
+                                    "bitbucket",
                                     "linear_oauth",
                                     "jira_oauth",
                                     null
@@ -30988,6 +31067,9 @@
                             "gitlab": {
                               "type": "boolean"
                             },
+                            "bitbucket": {
+                              "type": "boolean"
+                            },
                             "linear": {
                               "type": "boolean"
                             },
@@ -30999,6 +31081,7 @@
                             "slack",
                             "github",
                             "gitlab",
+                            "bitbucket",
                             "linear",
                             "jira"
                           ]
@@ -31560,6 +31643,7 @@
                                   "github",
                                   "gitlab",
                                   "azure-devops",
+                                  "bitbucket",
                                   "agentmail",
                                   "system",
                                   "schedule",
@@ -31886,6 +31970,7 @@
                       "github",
                       "gitlab",
                       "azure-devops",
+                      "bitbucket",
                       "agentmail",
                       "system",
                       "schedule",
@@ -33127,6 +33212,7 @@
                               "github",
                               "gitlab",
                               "azure-devops",
+                              "bitbucket",
                               "agentmail",
                               "system",
                               "schedule",
@@ -33998,7 +34084,8 @@
                     "enum": [
                       "github",
                       "gitlab",
-                      "azure-devops"
+                      "azure-devops",
+                      "bitbucket"
                     ]
                   },
                   "vcsRepo": {
@@ -40005,6 +40092,16 @@
               }
             }
           },
+          "403": {
+            "description": "Deferral owned by another agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Schedule not found",
             "content": {
@@ -40391,6 +40488,16 @@
           },
           "400": {
             "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Deferral owned by another agent",
             "content": {
               "application/json": {
                 "schema": {
@@ -46586,6 +46693,13 @@
                     "minimum": 0,
                     "maximum": 100
                   },
+                  "dependsOn": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  },
                   "offerMode": {
                     "type": "boolean"
                   },
@@ -48401,6 +48515,70 @@
           },
           {
             "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "keyPrefix",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "groupKey",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
+            "required": false,
+            "name": "noGroup",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "inbox",
+                "later",
+                "done",
+                "unread"
+              ]
+            },
+            "required": false,
+            "name": "triage",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "running",
+                "failed",
+                "needs"
+              ]
+            },
+            "required": false,
+            "name": "status",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": false,
+            "name": "withUserId",
+            "in": "query"
+          },
+          {
+            "schema": {
               "type": "string",
               "enum": [
                 "full",
@@ -48416,11 +48594,28 @@
               "type": "string",
               "enum": [
                 "mine",
-                "shared"
-              ]
+                "shared",
+                "tree"
+              ],
+              "description": "mine: owned sessions. shared: sessions shared with me. tree: Sessions that GET /api/session-tree counts: mine plus shared with me, no ownerless roots. A bypass actor sees every root with tree scope."
             },
             "required": false,
+            "description": "mine: owned sessions. shared: sessions shared with me. tree: Sessions that GET /api/session-tree counts: mine plus shared with me, no ownerless roots. A bypass actor sees every root with tree scope.",
             "name": "scope",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "mine",
+                "all"
+              ],
+              "description": "Sessions v2 view, for a user viewer with tree scope. mine (default): roots the user started from a human channel (not workflow, schedule, or system) plus sessions shared with the user. all: every tree session. Lists only: access is unchanged."
+            },
+            "required": false,
+            "description": "Sessions v2 view, for a user viewer with tree scope. mine (default): roots the user started from a human channel (not workflow, schedule, or system) plus sessions shared with the user. all: every tree session. Lists only: access is unchanged.",
+            "name": "show",
             "in": "query"
           }
         ],
@@ -48498,6 +48693,7 @@
                                       "github",
                                       "gitlab",
                                       "azure-devops",
+                                      "bitbucket",
                                       "agentmail",
                                       "system",
                                       "schedule",
@@ -48647,6 +48843,89 @@
                               "cancelled",
                               "superseded"
                             ]
+                          },
+                          "readState": {
+                            "type": "string",
+                            "enum": [
+                              "unread",
+                              "read",
+                              "later",
+                              "done"
+                            ]
+                          },
+                          "snoozeUntil": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "needsYou": {
+                            "type": "boolean"
+                          },
+                          "groupKey": {
+                            "type": "string"
+                          },
+                          "shared": {
+                            "type": "boolean"
+                          },
+                          "people": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "name"
+                              ]
+                            }
+                          },
+                          "peopleCount": {
+                            "type": "integer"
+                          },
+                          "preview": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "shares": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "userId": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "name": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "access": {
+                                  "type": "string",
+                                  "enum": [
+                                    "read",
+                                    "write"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "userId",
+                                "name",
+                                "access"
+                              ]
+                            }
                           }
                         },
                         "required": [
@@ -48679,6 +48958,430 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/session-tree": {
+      "get": {
+        "summary": "Get session groups and triage counts",
+        "tags": [
+          "Sessions"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "mine",
+                "all"
+              ],
+              "description": "Sessions v2 view, for a user viewer with tree scope. mine (default): roots the user started from a human channel (not workflow, schedule, or system) plus sessions shared with the user. all: every tree session. Lists only: access is unchanged."
+            },
+            "required": false,
+            "description": "Sessions v2 view, for a user viewer with tree scope. mine (default): roots the user started from a human channel (not workflow, schedule, or system) plus sessions shared with the user. all: every tree session. Lists only: access is unchanged.",
+            "name": "show",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Visible groups and section counts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "groups": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "total": {
+                            "type": "integer"
+                          },
+                          "unread": {
+                            "type": "integer"
+                          },
+                          "running": {
+                            "type": "integer"
+                          },
+                          "needsYou": {
+                            "type": "integer"
+                          },
+                          "key": {
+                            "type": "string"
+                          },
+                          "lastActivityAt": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "total",
+                          "unread",
+                          "running",
+                          "needsYou",
+                          "key",
+                          "lastActivityAt"
+                        ]
+                      }
+                    },
+                    "inbox": {
+                      "type": "object",
+                      "properties": {
+                        "total": {
+                          "type": "integer"
+                        },
+                        "unread": {
+                          "type": "integer"
+                        },
+                        "running": {
+                          "type": "integer"
+                        },
+                        "needsYou": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "total",
+                        "unread",
+                        "running",
+                        "needsYou"
+                      ]
+                    },
+                    "later": {
+                      "type": "object",
+                      "properties": {
+                        "total": {
+                          "type": "integer"
+                        },
+                        "unread": {
+                          "type": "integer"
+                        },
+                        "running": {
+                          "type": "integer"
+                        },
+                        "needsYou": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "total",
+                        "unread",
+                        "running",
+                        "needsYou"
+                      ]
+                    },
+                    "done": {
+                      "type": "object",
+                      "properties": {
+                        "total": {
+                          "type": "integer"
+                        },
+                        "unread": {
+                          "type": "integer"
+                        },
+                        "running": {
+                          "type": "integer"
+                        },
+                        "needsYou": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "total",
+                        "unread",
+                        "running",
+                        "needsYou"
+                      ]
+                    },
+                    "noGroup": {
+                      "type": "object",
+                      "properties": {
+                        "total": {
+                          "type": "integer"
+                        },
+                        "unread": {
+                          "type": "integer"
+                        },
+                        "running": {
+                          "type": "integer"
+                        },
+                        "needsYou": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "total",
+                        "unread",
+                        "running",
+                        "needsYou"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "groups",
+                    "inbox",
+                    "later",
+                    "done",
+                    "noGroup"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/session-moves": {
+      "post": {
+        "summary": "Move sessions into a group or reset their keys",
+        "tags": [
+          "Sessions"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "rootTaskIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "minItems": 1,
+                    "maxItems": 200
+                  },
+                  "groupKey": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "minLength": 1,
+                    "maxLength": 255,
+                    "description": "Non-unique asset directory namespace (for example shared/ or personal/<user-id>/drafts/). Runtime write boundaries normalize and validate the canonical form."
+                  }
+                },
+                "required": [
+                  "rootTaskIds",
+                  "groupKey"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Moved and skipped sessions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "moved": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "skipped": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "rootTaskId": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "rootTaskId",
+                          "reason"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "moved",
+                    "skipped"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid namespace or request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Personal destination not authorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Moves blocked until audit warnings are repaired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/session-moves/prefix": {
+      "post": {
+        "summary": "Rename or delete a session group",
+        "tags": [
+          "Sessions"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255,
+                    "description": "Non-unique asset directory namespace (for example shared/ or personal/<user-id>/drafts/). Runtime write boundaries normalize and validate the canonical form."
+                  },
+                  "to": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "minLength": 1,
+                    "maxLength": 255,
+                    "description": "Non-unique asset directory namespace (for example shared/ or personal/<user-id>/drafts/). Runtime write boundaries normalize and validate the canonical form."
+                  }
+                },
+                "required": [
+                  "from",
+                  "to"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Moved and skipped sessions and remaining movable roots",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "moved": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "skipped": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "rootTaskId": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "rootTaskId",
+                          "reason"
+                        ]
+                      }
+                    },
+                    "remaining": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "moved",
+                    "skipped",
+                    "remaining"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid namespace or request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Personal destination not authorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Moves blocked until audit warnings are repaired",
             "content": {
               "application/json": {
                 "schema": {
@@ -48922,6 +49625,47 @@
                     },
                     "owner": {
                       "$ref": "#/components/schemas/SessionOwner"
+                    },
+                    "approvals": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "pending"
+                            ]
+                          },
+                          "sourceTaskId": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "status",
+                          "sourceTaskId",
+                          "title"
+                        ]
+                      }
+                    },
+                    "readState": {
+                      "type": "string",
+                      "enum": [
+                        "unread",
+                        "read",
+                        "later",
+                        "done"
+                      ]
+                    },
+                    "lastActivityAt": {
+                      "type": "string"
                     }
                   },
                   "required": [
@@ -51006,6 +51750,87 @@
                     "hash",
                     "count",
                     "generatedAt"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agents/{id}/skills/bundle": {
+      "get": {
+        "summary": "Get an agent's installed skills together with their bundled files",
+        "description": "Single-request boot payload: every installed-and-enabled skill with the full content of its bundled files, plus the same signature the cheap probe returns. Lets a worker sync its local skill tree without an N+1 file fan-out.",
+        "tags": [
+          "Skills"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Agent skills bundle",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "skills": {
+                      "type": "array",
+                      "items": {
+                        "allOf": [
+                          {
+                            "$ref": "#/components/schemas/Skill"
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "isActive": {
+                                "type": "boolean"
+                              },
+                              "installedAt": {
+                                "type": "string"
+                              },
+                              "files": {
+                                "type": "array",
+                                "items": {
+                                  "$ref": "#/components/schemas/SkillFile"
+                                }
+                              }
+                            },
+                            "required": [
+                              "isActive",
+                              "installedAt",
+                              "files"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "total": {
+                      "type": "number"
+                    },
+                    "signature": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "skills",
+                    "total",
+                    "signature"
                   ]
                 }
               }
@@ -56204,6 +57029,189 @@
         }
       }
     },
+    "/api/rbac/roles": {
+      "get": {
+        "operationId": "rbac_listRoles",
+        "summary": "List RBAC roles with their verbs",
+        "tags": [
+          "Users"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Role catalog",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "roles": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/RbacRole"
+                      }
+                    }
+                  },
+                  "required": [
+                    "roles"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/users/{id}/roles": {
+      "get": {
+        "operationId": "users_getRbacRoles",
+        "summary": "Get a user's RBAC roles",
+        "tags": [
+          "Users"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The user's roles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRbacRoles"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "users_setRbacRoles",
+        "summary": "Set a user's RBAC roles",
+        "description": "Replaces the user's roles. The set holds exactly one of admin, requester, viewer plus any extra roles. Demoting a user below admin removes the ability to answer approval requests, even when the user is listed as an approver. Fails with 409 when it would leave no active admin.",
+        "tags": [
+          "Users"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "roles": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "minItems": 1
+                  }
+                },
+                "required": [
+                  "roles"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The user's roles after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRbacRoles"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid role set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed to change roles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Would leave no active admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/whoami": {
       "get": {
         "summary": "Resolve the authenticated principal behind the presented bearer",
@@ -58363,6 +59371,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "Source is the last active admin (last_admin)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -58905,6 +59923,88 @@
           },
           "503": {
             "description": "Azure DevOps integration not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bitbucket/webhook": {
+      "post": {
+        "summary": "Handle Bitbucket Cloud webhook events",
+        "tags": [
+          "Webhooks"
+        ],
+        "responses": {
+          "200": {
+            "description": "Event processed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "created": {
+                      "type": "boolean"
+                    },
+                    "taskId": {
+                      "type": "string"
+                    },
+                    "skipped": {
+                      "type": "boolean"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "extension": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "created"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid signature",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body exceeds 1 MiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Bitbucket integration not configured",
             "content": {
               "application/json": {
                 "schema": {

@@ -35,7 +35,7 @@ Architecture: API server owns the `scripts` + `script_versions` tables. Workers 
 
 When the API is root, every sandboxed child runs as a leased per-run uid (`src/utils/sandbox-uid.ts`; callers chown the tmpdir and release the lease), and the native harness installs an exec-deny seccomp filter before importing user code (`src/scripts-runtime/sandbox-seccomp.ts`). `/health` `meta.scripts.sandbox` reports the measured level.
 
-Config injection: agent identity + bearer + mcpBaseUrl flow as a JSON `SwarmConfigPayload` over the subprocess **stdin** — NOT env vars. Bearer is wrapped in `Redacted<string>` inside the script; user code never unwraps. `process.env` carries only Node/Bun defaults. Loader reads the bearer via `getApiKey()` from `src/utils/api-key.ts` (never raw env).
+Config injection: agent identity + bearer + mcpBaseUrl flow as a JSON `SwarmConfigPayload` over the subprocess **stdin** — NOT env vars. Bearer is wrapped in `Redacted<string>` inside the script; user code never unwraps. `process.env` carries only Node/Bun defaults. Api-side callers run scripts through `runScriptWithRunCredential` (`src/be/scripts/run-credential.ts`): it mints a per-run token bound to the executing agent, passes it to `runScript` as `apiKey`, and revokes it when the run ends. Runs with no real agent (sentinel ids) get no token, and the loader falls back to `getApiKey()` from `src/utils/api-key.ts` (never raw env).
 
 FS modes: `'none'` = per-run tmpdir (v1 only); `'workspace-rw'` returns 501 in v1 (worker dispatch is v2).
 

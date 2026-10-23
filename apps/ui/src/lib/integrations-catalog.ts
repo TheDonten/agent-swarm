@@ -16,6 +16,7 @@ import {
   openAICompatibleProviders,
 } from "@desplega/model-catalog";
 import type { ProviderIconKey } from "./agent-runtime-models";
+import { TRANSCRIPTION_PRESENCE_KEYS, TRANSCRIPTION_PROVIDERS } from "./transcription-status";
 
 export type IntegrationFieldType = "text" | "password" | "textarea" | "select" | "boolean";
 
@@ -65,7 +66,8 @@ export type IntegrationSpecialFlow =
   | "codex-cli"
   | "claude-managed-cli"
   | "memory-embeddings"
-  | "chat-sdk";
+  | "chat-sdk"
+  | "transcription";
 
 /** Which agent role(s) the swarm needs to have a given skill installed on. */
 export type AgentRole = "lead" | "worker";
@@ -148,6 +150,11 @@ export interface IntegrationDef {
    * skill lives so the operator knows how to get it.
    */
   recommendedSkills?: RecommendedSkill[];
+  /**
+   * Env keys outside `fields` whose presence feeds this integration's status,
+   * such as another integration's API key it reuses.
+   */
+  presenceKeys?: readonly string[];
 }
 
 export function getIntegrationFields(def: IntegrationDef): IntegrationField[] {
@@ -563,6 +570,75 @@ export const INTEGRATIONS: IntegrationDef[] = [
         type: "text",
         advanced: true,
         helpText: "Display name the bot appears as in GitLab comments.",
+      },
+    ],
+  },
+
+  // ------------------------------------------------------------ Bitbucket
+  {
+    id: "bitbucket",
+    name: "Bitbucket",
+    description:
+      "React to Bitbucket Cloud pull request mentions and review requests, and push commits from agents.",
+    category: "issues",
+    iconKey: "git-merge",
+    logoSrc: "/integration-logos/bitbucket.svg",
+    docsUrl: "https://docs.agent-swarm.dev/docs/integrations/bitbucket",
+    disableKey: "BITBUCKET_DISABLE",
+    restartRequired: true,
+    fields: [
+      {
+        key: "BITBUCKET_TOKEN",
+        label: "API token",
+        type: "password",
+        required: true,
+        isSecret: true,
+        placeholder: "ATATT3x...",
+        helpText:
+          "Atlassian API token of the bot service account, or a workspace access token. Used for REST calls and worker git clone and push.",
+        affectsRestart: true,
+      },
+      {
+        key: "BITBUCKET_WEBHOOK_SECRET",
+        label: "Webhook secret",
+        type: "password",
+        required: true,
+        isSecret: true,
+        helpText:
+          "Secret configured on your Bitbucket webhook. Verifies the `X-Hub-Signature` of incoming payloads and enables the integration.",
+        affectsRestart: true,
+      },
+      {
+        key: "BITBUCKET_EMAIL",
+        label: "Commit author email",
+        type: "text",
+        placeholder: "agent-swarm-bot@example.com",
+        helpText:
+          "Used as `user.email` on workers, only when no GitHub, GitLab, or Azure DevOps token is set.",
+      },
+      {
+        key: "BITBUCKET_NAME",
+        label: "Commit author name",
+        type: "text",
+        placeholder: "Agent Swarm Bot",
+        helpText: "Used as `user.name` on workers, with the same rule as the email.",
+      },
+      {
+        key: "BITBUCKET_BOT_NAME",
+        label: "Bot name",
+        type: "text",
+        advanced: true,
+        placeholder: "agent-swarm-bot",
+        helpText: "Name matched by plain-text `@name` mentions. Defaults to `agent-swarm-bot`.",
+      },
+      {
+        key: "BITBUCKET_BOT_ACCOUNT_ID",
+        label: "Bot account ID",
+        type: "text",
+        advanced: true,
+        placeholder: "557058:00000000-0000-0000-0000-000000000000",
+        helpText:
+          "The bot's Atlassian `account_id`. Resolved from the token by default; required with a workspace access token.",
       },
     ],
   },
@@ -991,6 +1067,58 @@ export const INTEGRATIONS: IntegrationDef[] = [
         type: "text",
         placeholder: "text-embedding-3-small",
         helpText: "Embedding model id. On Azure, the embedding deployment name.",
+      },
+    ],
+  },
+
+  // ---------------------------------------------------------- Transcription
+  {
+    id: "transcription",
+    name: "Transcription",
+    description:
+      "Transcribe voice notes and audio files into task text with ElevenLabs, OpenAI or Groq.",
+    category: "llm",
+    iconKey: "mic",
+    docsUrl: "https://docs.agent-swarm.dev/docs/integrations/chat-sdk#voice-notes",
+    specialFlow: "transcription",
+    restartRequired: false,
+    presenceKeys: TRANSCRIPTION_PRESENCE_KEYS,
+    fields: [
+      {
+        key: "TRANSCRIPTION_PROVIDER",
+        label: "Provider",
+        type: "select",
+        placeholder: "Auto-detect",
+        options: TRANSCRIPTION_PROVIDERS.map((p) => ({ value: p.id, label: p.label })),
+        helpText:
+          "Unset: auto-detect from the keys above. Set: use this provider. Without an API key below, it uses that provider's own key. openai also covers self-hosted whisper servers.",
+      },
+      {
+        key: "TRANSCRIPTION_API_KEY",
+        label: "API key",
+        type: "password",
+        isSecret: true,
+        writeOnly: true,
+        helpText:
+          "Optional. Overrides the auto-detected key. Only the API server reads it: it is never exported to agents or scripts.",
+      },
+      {
+        key: "TRANSCRIPTION_BASE_URL",
+        label: "Base URL",
+        type: "text",
+        placeholder: "Provider default",
+        helpText:
+          "Applies only with the API key above; an auto-detected key always goes to its provider. Empty uses the provider's default: https://api.elevenlabs.io/v1, https://api.openai.com/v1 or https://api.groq.com/openai/v1.",
+        advanced: true,
+      },
+      {
+        key: "TRANSCRIPTION_MODEL",
+        label: "Model",
+        type: "text",
+        placeholder: "Provider default",
+        helpText:
+          "Empty uses the provider's default: scribe_v2 (ElevenLabs), whisper-1 (OpenAI) or whisper-large-v3-turbo (Groq).",
+        advanced: true,
       },
     ],
   },

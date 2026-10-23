@@ -3376,6 +3376,7 @@ export interface paths {
                         sourceTaskId?: string;
                         /** @description Seconds until the request expires. After that the request becomes 'timeout' and you get a hitl-follow-up task. A request with no timeout is cancelled after APPROVAL_REQUEST_AUTO_CANCELLATION_DAYS days (default 7). */
                         timeoutSeconds?: number;
+                        /** @description Where to announce the request. A Slack target (channel or user ID) gets a card with the title, the questions and a link to the dashboard page that answers it. Slack targets need a lead agent caller (403 otherwise). Email is not supported yet and is skipped. */
                         notifications?: {
                             /** @enum {string} */
                             channel: "slack" | "email";
@@ -3468,6 +3469,15 @@ export interface paths {
                 };
                 /** @description Validation error */
                 400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description Slack notifications require a lead agent */
+                403: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -7313,7 +7323,7 @@ export interface paths {
         put?: never;
         /**
          * Upload a binary task file attachment
-         * @description Accepts a raw binary request body. Pass the display/path name as the `name` query parameter.
+         * @description Accepts a raw binary request body. Pass the display/path name as the `name` query parameter. An `audio/*` file uploaded to a `draft` task gets a `[File: …]` line and its transcript (or why there is none) appended to the task text before the response; a failed transcription never fails the upload.
          */
         post: {
             parameters: {
@@ -12025,7 +12035,7 @@ export interface paths {
                                         /** Format: date-time */
                                         at: string | null;
                                         /** @enum {string|null} */
-                                        method: "slack" | "github" | "gitlab" | "linear_oauth" | "jira_oauth" | null;
+                                        method: "slack" | "github" | "gitlab" | "bitbucket" | "linear_oauth" | "jira_oauth" | null;
                                         /** @enum {string|null} */
                                         errorClass: "auth" | "network" | "timeout" | "dimension" | "model" | "endpoint" | "not_enabled" | "expired" | "unknown" | null;
                                     };
@@ -12058,6 +12068,7 @@ export interface paths {
                                     slack: boolean;
                                     github: boolean;
                                     gitlab: boolean;
+                                    bitbucket: boolean;
                                     linear: boolean;
                                     jira: boolean;
                                 };
@@ -12124,7 +12135,7 @@ export interface paths {
                         /** @enum {string} */
                         step: "integrations";
                         /** @enum {string} */
-                        method: "slack" | "github" | "gitlab" | "linear_oauth" | "jira_oauth";
+                        method: "slack" | "github" | "gitlab" | "bitbucket" | "linear_oauth" | "jira_oauth";
                     } | {
                         /** @enum {string} */
                         action: "skip";
@@ -12235,7 +12246,7 @@ export interface paths {
                                         /** Format: date-time */
                                         at: string | null;
                                         /** @enum {string|null} */
-                                        method: "slack" | "github" | "gitlab" | "linear_oauth" | "jira_oauth" | null;
+                                        method: "slack" | "github" | "gitlab" | "bitbucket" | "linear_oauth" | "jira_oauth" | null;
                                         /** @enum {string|null} */
                                         errorClass: "auth" | "network" | "timeout" | "dimension" | "model" | "endpoint" | "not_enabled" | "expired" | "unknown" | null;
                                     };
@@ -12268,6 +12279,7 @@ export interface paths {
                                     slack: boolean;
                                     github: boolean;
                                     gitlab: boolean;
+                                    bitbucket: boolean;
                                     linear: boolean;
                                     jira: boolean;
                                 };
@@ -12596,7 +12608,7 @@ export interface paths {
                                  * @default mcp
                                  * @enum {string}
                                  */
-                                source: "mcp" | "slack" | "api" | "ui" | "github" | "gitlab" | "azure-devops" | "agentmail" | "system" | "schedule" | "workflow" | "linear" | "jira" | "comb" | "chat";
+                                source: "mcp" | "slack" | "api" | "ui" | "github" | "gitlab" | "azure-devops" | "bitbucket" | "agentmail" | "system" | "schedule" | "workflow" | "linear" | "jira" | "comb" | "chat";
                                 taskType?: string;
                                 /** @default [] */
                                 tags: string[];
@@ -12691,7 +12703,7 @@ export interface paths {
                         /** @description Non-unique asset directory namespace (for example shared/ or personal/<user-id>/drafts/). Runtime write boundaries normalize and validate the canonical form. */
                         key?: string;
                         /** @enum {string} */
-                        source?: "mcp" | "slack" | "api" | "ui" | "github" | "gitlab" | "azure-devops" | "agentmail" | "system" | "schedule" | "workflow" | "linear" | "jira" | "comb" | "chat";
+                        source?: "mcp" | "slack" | "api" | "ui" | "github" | "gitlab" | "azure-devops" | "bitbucket" | "agentmail" | "system" | "schedule" | "workflow" | "linear" | "jira" | "comb" | "chat";
                         outputSchema?: {
                             [key: string]: unknown;
                         };
@@ -13528,7 +13540,7 @@ export interface paths {
                                  * @default mcp
                                  * @enum {string}
                                  */
-                                source: "mcp" | "slack" | "api" | "ui" | "github" | "gitlab" | "azure-devops" | "agentmail" | "system" | "schedule" | "workflow" | "linear" | "jira" | "comb" | "chat";
+                                source: "mcp" | "slack" | "api" | "ui" | "github" | "gitlab" | "azure-devops" | "bitbucket" | "agentmail" | "system" | "schedule" | "workflow" | "linear" | "jira" | "comb" | "chat";
                                 taskType?: string;
                                 /** @default [] */
                                 tags: string[];
@@ -14063,7 +14075,7 @@ export interface paths {
                 content: {
                     "application/json": {
                         /** @enum {string} */
-                        vcsProvider: "github" | "gitlab" | "azure-devops";
+                        vcsProvider: "github" | "gitlab" | "azure-devops" | "bitbucket";
                         vcsRepo: string;
                         vcsNumber: number;
                         /** Format: uri */
@@ -17327,6 +17339,15 @@ export interface paths {
                         "application/json": components["schemas"]["ErrorResponse"];
                     };
                 };
+                /** @description Deferral owned by another agent */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
                 /** @description Schedule not found */
                 404: {
                     headers: {
@@ -17512,6 +17533,15 @@ export interface paths {
                 };
                 /** @description Validation error */
                 400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description Deferral owned by another agent */
+                403: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -18779,8 +18809,17 @@ export interface paths {
                     q?: string;
                     requestedByUserId?: string;
                     contextKeyPrefix?: string;
+                    keyPrefix?: string;
+                    groupKey?: string;
+                    noGroup?: "true" | "false";
+                    triage?: "inbox" | "later" | "done" | "unread";
+                    status?: "running" | "failed" | "needs";
+                    withUserId?: string;
                     fields?: "full" | "slim";
-                    scope?: "mine" | "shared";
+                    /** @description mine: owned sessions. shared: sessions shared with me. tree: Sessions that GET /api/session-tree counts: mine plus shared with me, no ownerless roots. A bypass actor sees every root with tree scope. */
+                    scope?: "mine" | "shared" | "tree";
+                    /** @description Sessions v2 view, for a user viewer with tree scope. mine (default): roots the user started from a human channel (not workflow, schedule, or system) plus sessions shared with the user. all: every tree session. Lists only: access is unchanged. */
+                    show?: "mine" | "all";
                 };
                 header?: never;
                 path?: never;
@@ -18811,7 +18850,7 @@ export interface paths {
                                      * @default mcp
                                      * @enum {string}
                                      */
-                                    source: "mcp" | "slack" | "api" | "ui" | "github" | "gitlab" | "azure-devops" | "agentmail" | "system" | "schedule" | "workflow" | "linear" | "jira" | "comb" | "chat";
+                                    source: "mcp" | "slack" | "api" | "ui" | "github" | "gitlab" | "azure-devops" | "bitbucket" | "agentmail" | "system" | "schedule" | "workflow" | "linear" | "jira" | "comb" | "chat";
                                     taskType?: string;
                                     /** @default [] */
                                     tags: string[];
@@ -18846,6 +18885,24 @@ export interface paths {
                                 lastActivityAt: string;
                                 /** @enum {string} */
                                 latestStatus: "draft" | "backlog" | "unassigned" | "offered" | "reviewing" | "pending" | "in_progress" | "paused" | "completed" | "failed" | "cancelled" | "superseded";
+                                /** @enum {string} */
+                                readState?: "unread" | "read" | "later" | "done";
+                                snoozeUntil?: string | null;
+                                needsYou?: boolean;
+                                groupKey?: string;
+                                shared?: boolean;
+                                people?: {
+                                    id: string;
+                                    name: string;
+                                }[];
+                                peopleCount?: number;
+                                preview?: string | null;
+                                shares?: {
+                                    userId: string | null;
+                                    name: string | null;
+                                    /** @enum {string} */
+                                    access: "read" | "write";
+                                }[];
                             }[];
                             total: number;
                             limit: number;
@@ -18866,6 +18923,243 @@ export interface paths {
         };
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/session-tree": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get session groups and triage counts */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Sessions v2 view, for a user viewer with tree scope. mine (default): roots the user started from a human channel (not workflow, schedule, or system) plus sessions shared with the user. all: every tree session. Lists only: access is unchanged. */
+                    show?: "mine" | "all";
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Visible groups and section counts */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            groups: {
+                                total: number;
+                                unread: number;
+                                running: number;
+                                needsYou: number;
+                                key: string;
+                                lastActivityAt: string;
+                            }[];
+                            inbox: {
+                                total: number;
+                                unread: number;
+                                running: number;
+                                needsYou: number;
+                            };
+                            later: {
+                                total: number;
+                                unread: number;
+                                running: number;
+                                needsYou: number;
+                            };
+                            done: {
+                                total: number;
+                                unread: number;
+                                running: number;
+                                needsYou: number;
+                            };
+                            noGroup: {
+                                total: number;
+                                unread: number;
+                                running: number;
+                                needsYou: number;
+                            };
+                        };
+                    };
+                };
+                /** @description Unauthorized */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/session-moves": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Move sessions into a group or reset their keys */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        rootTaskIds: string[];
+                        /** @description Non-unique asset directory namespace (for example shared/ or personal/<user-id>/drafts/). Runtime write boundaries normalize and validate the canonical form. */
+                        groupKey: string | null;
+                    };
+                };
+            };
+            responses: {
+                /** @description Moved and skipped sessions */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            moved: string[];
+                            skipped: {
+                                rootTaskId: string;
+                                reason: string;
+                            }[];
+                        };
+                    };
+                };
+                /** @description Invalid namespace or request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description Personal destination not authorized */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description Moves blocked until audit warnings are repaired */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/session-moves/prefix": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rename or delete a session group */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        /** @description Non-unique asset directory namespace (for example shared/ or personal/<user-id>/drafts/). Runtime write boundaries normalize and validate the canonical form. */
+                        from: string;
+                        /** @description Non-unique asset directory namespace (for example shared/ or personal/<user-id>/drafts/). Runtime write boundaries normalize and validate the canonical form. */
+                        to: string | null;
+                    };
+                };
+            };
+            responses: {
+                /** @description Moved and skipped sessions and remaining movable roots */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            moved: string[];
+                            skipped: {
+                                rootTaskId: string;
+                                reason: string;
+                            }[];
+                            remaining: number;
+                        };
+                    };
+                };
+                /** @description Invalid namespace or request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description Personal destination not authorized */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description Moves blocked until audit warnings are repaired */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -18933,6 +19227,16 @@ export interface paths {
                             /** @enum {string} */
                             access: "owner" | "write" | "read";
                             owner: components["schemas"]["SessionOwner"];
+                            approvals?: {
+                                id: string;
+                                /** @enum {string} */
+                                status: "pending";
+                                sourceTaskId: string;
+                                title: string;
+                            }[];
+                            /** @enum {string} */
+                            readState?: "unread" | "read" | "later" | "done";
+                            lastActivityAt?: string;
                         };
                     };
                 };
@@ -20124,6 +20428,55 @@ export interface paths {
                             hash: string;
                             count: number;
                             generatedAt: string;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agents/{id}/skills/bundle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get an agent's installed skills together with their bundled files
+         * @description Single-request boot payload: every installed-and-enabled skill with the full content of its bundled files, plus the same signature the cheap probe returns. Lets a worker sync its local skill tree without an N+1 file fan-out.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Agent skills bundle */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            skills: (components["schemas"]["Skill"] & {
+                                isActive: boolean;
+                                installedAt: string;
+                                files: components["schemas"]["SkillFile"][];
+                            })[];
+                            total: number;
+                            signature: string;
                         };
                     };
                 };
@@ -22470,6 +22823,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/rbac/roles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List RBAC roles with their verbs */
+        get: operations["rbac_listRoles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/{id}/roles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a user's RBAC roles */
+        get: operations["users_getRbacRoles"];
+        /**
+         * Set a user's RBAC roles
+         * @description Replaces the user's roles. The set holds exactly one of admin, requester, viewer plus any extra roles. Demoting a user below admin removes the ability to answer approval requests, even when the user is listed as an approver. Fails with 409 when it would leave no active admin.
+         */
+        put: operations["users_setRbacRoles"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/whoami": {
         parameters: {
             query?: never;
@@ -23489,6 +23880,15 @@ export interface paths {
                         "application/json": components["schemas"]["ErrorResponse"];
                     };
                 };
+                /** @description Source is the last active admin (last_admin) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
             };
         };
         delete?: never;
@@ -23882,6 +24282,78 @@ export interface paths {
                     };
                 };
                 /** @description Azure DevOps integration not configured */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/bitbucket/webhook": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Handle Bitbucket Cloud webhook events */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Event processed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            created: boolean;
+                            taskId?: string;
+                            skipped?: boolean;
+                            reason?: string;
+                            extension?: {
+                                id: string;
+                                name: string;
+                            };
+                        };
+                    };
+                };
+                /** @description Invalid signature */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description Body exceeds 1 MiB */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description Bitbucket integration not configured */
                 503: {
                     headers: {
                         [name: string]: unknown;
@@ -25633,7 +26105,7 @@ export interface components {
              * @default mcp
              * @enum {string}
              */
-            source: "mcp" | "slack" | "api" | "ui" | "github" | "gitlab" | "azure-devops" | "agentmail" | "system" | "schedule" | "workflow" | "linear" | "jira" | "comb" | "chat";
+            source: "mcp" | "slack" | "api" | "ui" | "github" | "gitlab" | "azure-devops" | "bitbucket" | "agentmail" | "system" | "schedule" | "workflow" | "linear" | "jira" | "comb" | "chat";
             /** @enum {string} */
             routingReason?: "skill" | "continuity" | "overflow" | "human_pinned" | "reroute_fault";
             /**
@@ -25676,7 +26148,7 @@ export interface components {
             slackProgressMessageTs?: string;
             slackTreeRootMessageTs?: string;
             /** @enum {string} */
-            vcsProvider?: "github" | "gitlab" | "azure-devops";
+            vcsProvider?: "github" | "gitlab" | "azure-devops" | "bitbucket";
             vcsRepo?: string;
             vcsEventType?: string;
             vcsNumber?: number;
@@ -26746,6 +27218,19 @@ export interface components {
             /** @default [] */
             tags: string[];
             createdAt: string;
+        };
+        RbacRole: {
+            id: string;
+            name: string;
+            description: string | null;
+            isBuiltin: boolean;
+            grantsAll: boolean;
+            primary: boolean;
+            verbs: string[];
+        };
+        UserRbacRoles: {
+            userId: string;
+            roles: components["schemas"]["RbacRole"][];
         };
         User: {
             id: string;
@@ -29999,6 +30484,7 @@ export interface operations {
                     routingNote?: string;
                     tags?: string[];
                     priority?: number;
+                    dependsOn?: string[];
                     offerMode?: boolean;
                     dir?: string;
                     vcsRepo?: string;
@@ -30920,6 +31406,123 @@ export interface operations {
             };
             /** @description Endpoint not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    rbac_listRoles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Role catalog */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        roles: components["schemas"]["RbacRole"][];
+                    };
+                };
+            };
+        };
+    };
+    users_getRbacRoles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The user's roles */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserRbacRoles"];
+                };
+            };
+            /** @description User not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    users_setRbacRoles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    roles: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description The user's roles after the change */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserRbacRoles"];
+                };
+            };
+            /** @description Invalid role set */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not allowed to change roles */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description User not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Would leave no active admin */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

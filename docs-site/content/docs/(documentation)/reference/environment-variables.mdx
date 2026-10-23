@@ -370,6 +370,20 @@ Run the one-time `bunx @desplega.ai/agent-swarm claude-managed-setup` from your 
 | `AZURE_DEVOPS_NAME` | Git commit name for Azure Repos commits (default: `GITHUB_NAME`, then `Worker Agent`; not applied when `GITHUB_TOKEN` or `GITLAB_TOKEN` is set) |
 | `AZURE_DEVOPS_DISABLE` | Set to `true` to disable the Azure DevOps integration |
 
+## Bitbucket Integration
+
+Bitbucket Cloud only. See [Bitbucket Integration](/docs/integrations/bitbucket).
+
+| Variable | Description |
+|----------|-------------|
+| `BITBUCKET_WEBHOOK_SECRET` | Secret the webhook signs deliveries with (`X-Hub-Signature: sha256=...`); enables the integration |
+| `BITBUCKET_TOKEN` | Atlassian API token of the bot service account (recommended) or a workspace access token. API server: REST calls and the bot identity lookup (`GET /2.0/user`). Workers: git clone and push (username `x-token-auth`) and REST calls for PR linking |
+| `BITBUCKET_BOT_ACCOUNT_ID` | Atlassian `account_id` of the bot (e.g. `557058:<uuid>`) for `@{<account_id>}` mentions (default: resolved from `BITBUCKET_TOKEN` via `GET /2.0/user`; set it with a workspace access token) |
+| `BITBUCKET_BOT_NAME` | Name for plain-text `@name` mentions (default: `agent-swarm-bot`) |
+| `BITBUCKET_EMAIL` | Git commit email for Bitbucket commits (default: `GITHUB_EMAIL`, then `worker-agent@desplega.ai`; not applied when `GITHUB_TOKEN`, `GITLAB_TOKEN` or `AZURE_DEVOPS_TOKEN` is set) |
+| `BITBUCKET_NAME` | Git commit name for Bitbucket commits (default: `GITHUB_NAME`, then `Worker Agent`; not applied when `GITHUB_TOKEN`, `GITLAB_TOKEN` or `AZURE_DEVOPS_TOKEN` is set) |
+| `BITBUCKET_DISABLE` | Set to `true` to disable the Bitbucket integration |
+
 ## AgentMail Integration
 
 | Variable | Description |
@@ -533,7 +547,7 @@ Environment variables for the hosted Pages feature (DB-backed, agent-authored we
 
 | Variable | Description |
 |----------|-------------|
-| `PAGE_SESSION_SECRET` | HMAC-SHA256 secret for signing the `page_session` cookie. **Reserved-like**: not read from `swarm_config`, and never falls back to the swarm API key (that key's documented default is public). When unset, resolved via `PAGE_SESSION_SECRET_FILE`, then `<dirname(DATABASE_PATH)>/.page-session-secret` on disk, then auto-generated and persisted there on first use — mirrors `SECRETS_ENCRYPTION_KEY`'s resolution order (see [Encryption Key](/docs/guides/deployment#encryption-key)). |
+| `PAGE_SESSION_SECRET` | HMAC-SHA256 secret for signing the per-page `page_session_<pageId>` cookies (and the legacy `page_session` cookie, still accepted for its own page). **Reserved-like**: not read from `swarm_config`, and never falls back to the swarm API key (that key's documented default is public). When unset, resolved via `PAGE_SESSION_SECRET_FILE`, then `<dirname(DATABASE_PATH)>/.page-session-secret` on disk, then auto-generated and persisted there on first use — mirrors `SECRETS_ENCRYPTION_KEY`'s resolution order (see [Encryption Key](/docs/guides/deployment#encryption-key)). |
 | `PAGE_SESSION_SECRET_FILE` | Alternative to `PAGE_SESSION_SECRET`: absolute path to a file whose contents are the secret. Useful with Docker secrets or k8s `Secret` volume mounts. |
 
 ## x402 Payments
