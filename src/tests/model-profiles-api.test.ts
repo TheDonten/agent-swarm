@@ -15,6 +15,7 @@ import {
   getDbClient,
   getTaskById,
   initDb,
+  pauseTask,
   startTask,
   supersedeTask,
   upsertSwarmConfig,
@@ -279,6 +280,38 @@ describe("profile CRUD", () => {
     expect(inUse.status).toBe(409);
     expect(((await inUse.json()) as { error: string }).error).toContain("1 agent(s)");
   });
+
+  test("a paused task holding an agent default's profile keeps it, so its resume keeps the allowlist", async () => {
+    await createModelProfile({
+      name: "claude-keyed",
+      harness: "claude",
+      model: "opus",
+      credentials: { CLAUDE_CODE_OAUTH_TOKEN: ["aaaaa"] },
+    });
+    // Claimed under the agent default: resolvedProfile only, no task.profile.
+    const task = await createTaskExtended("work", { agentId: CLAUDE_ID });
+    await startTask(task.id);
+    await getDbClient().run("UPDATE agent_tasks SET resolvedProfile = ? WHERE id = ?", [
+      "claude-keyed",
+      task.id,
+    ]);
+    expect(await pauseTask(task.id)).not.toBeNull();
+
+    const inUse = await call("DELETE", "/api/model-profiles/claude-keyed", undefined);
+    expect(inUse.status).toBe(409);
+    expect(((await inUse.json()) as { error: string }).error).toContain("1 unfinished");
+    const paused = await call("GET", "/api/paused-tasks", undefined, { "x-agent-id": CLAUDE_ID });
+    const { tasks } = (await paused.json()) as {
+      tasks: { id: string; credentialAllowlist?: Record<string, string[]> }[];
+    };
+    expect(tasks.find((t) => t.id === task.id)?.credentialAllowlist).toEqual({
+      CLAUDE_CODE_OAUTH_TOKEN: ["aaaaa"],
+    });
+
+    // Control: once the task finishes, the profile is free to go.
+    await getDbClient().run("UPDATE agent_tasks SET status = 'completed' WHERE id = ?", [task.id]);
+    expect((await call("DELETE", "/api/model-profiles/claude-keyed", undefined)).status).toBe(200);
+  });
 });
 
 describe("profile credential allowlist", () => {
@@ -368,6 +401,44 @@ describe("profile credential allowlist", () => {
       credentials: { HELMCODE_API_KEY: ["abcde"] },
     });
     expect(helm.status).toBe(201);
+  });
+
+  test("a var the harness never loads for this model is 400, though the harness loads it for others", async () => {
+    // pi drops OPENAI_API_KEY for a slash-qualified model (`getModelAwareCredentialVars`).
+    const slash = {
+      harness: "pi",
+      model: "openrouter/google/gemini-3-flash-preview",
+      allowCustomModel: true,
+    };
+    const openai = await call("POST", "/api/model-profiles", {
+      ...slash,
+      name: "pi-slash-openai",
+      credentials: { OPENAI_API_KEY: ["abcde"] },
+    });
+    expect(openai.status).toBe(400);
+    expect(((await openai.json()) as { error: string }).error).toContain("OPENAI_API_KEY");
+
+    // Controls: a var this model loads, and the same var on a model that loads it.
+    expect(
+      (
+        await call("POST", "/api/model-profiles", {
+          ...slash,
+          name: "pi-slash-openrouter",
+          credentials: { OPENROUTER_API_KEY: ["abcde"] },
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await call("POST", "/api/model-profiles", {
+          harness: "pi",
+          model: "gpt-5.6-sol",
+          allowCustomModel: true,
+          name: "pi-bare-openai",
+          credentials: { OPENAI_API_KEY: ["abcde"] },
+        })
+      ).status,
+    ).toBe(201);
   });
 });
 

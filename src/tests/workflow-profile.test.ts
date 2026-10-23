@@ -5,19 +5,27 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { unlink } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as db from "../be/db";
 import {
   closeDb,
   createAgent,
+  createSwarmRepo,
   createWorkflow,
   getTaskByWorkflowRunStepId,
+  getWorkflow,
   getWorkflowRun,
   getWorkflowRunStepsByRunId,
   initDb,
+  upsertSwarmConfig,
 } from "../be/db";
 import { updateAgentCredStatus } from "../be/db/agents";
 import { createModelProfile } from "../be/db/model-profiles";
 import { reloadModelsCatalog } from "../be/model-catalog-store";
+import { getPathSegments, parseQueryParams } from "../http/utils";
+import { handleWorkflows } from "../http/workflows";
+import { registerUpdateWorkflowTool } from "../tools/workflows/update-workflow";
 import type { AgentCredStatus, WorkflowDefinition } from "../types";
 import { startWorkflowExecution } from "../workflows/engine";
 import { workflowEventBus } from "../workflows/event-bus";
@@ -26,8 +34,10 @@ import type { ExecutorDependencies } from "../workflows/executors/base";
 import { ExecutorRegistry } from "../workflows/executors/registry";
 import { workflowModelErrors } from "../workflows/model-validation";
 import { interpolate } from "../workflows/template";
+import { listenOnFreePort } from "./test-net";
 
 const TEST_DB_PATH = "./test-workflow-profile.sqlite";
+const oldEncryptionKey = process.env.SECRETS_ENCRYPTION_KEY;
 
 async function removeDbFiles(path: string): Promise<void> {
   for (const suffix of ["", "-wal", "-shm"]) {
@@ -59,6 +69,7 @@ let claudeId = "";
 let codexId = "";
 
 beforeAll(async () => {
+  process.env.SECRETS_ENCRYPTION_KEY ??= Buffer.alloc(32, 7).toString("base64");
   await removeDbFiles(TEST_DB_PATH);
   initDb(TEST_DB_PATH);
   await reloadModelsCatalog();
@@ -83,6 +94,8 @@ beforeAll(async () => {
 afterAll(async () => {
   closeDb();
   await removeDbFiles(TEST_DB_PATH);
+  if (oldEncryptionKey === undefined) delete process.env.SECRETS_ENCRYPTION_KEY;
+  else process.env.SECRETS_ENCRYPTION_KEY = oldEncryptionKey;
 });
 
 function agentTaskDef(config: Record<string, unknown>): WorkflowDefinition {
@@ -198,5 +211,118 @@ describe("node run", () => {
     expect(failed.error).toContain('Model profile "wp-claude-opus" fails harness');
     expect(await getTaskByWorkflowRunStepId(failed.id)).toBeFalsy();
     expect((await getWorkflowRun(runId))?.status).toBe("failed");
+  });
+});
+
+// A workflow update that only moves the workflow to another repo still judges
+// its stored definition: a static profile's credential allowlist now checks
+// against that repo's pool (repo > agent), on both the HTTP and MCP paths.
+describe("workflow repo change", () => {
+  let server: Server;
+  let baseUrl = "";
+  let updateTool: (args: Record<string, unknown>) => Promise<unknown>;
+  let repoAgentId = "";
+
+  beforeAll(async () => {
+    server = createServer(async (req, res) => {
+      res.setHeader("Content-Type", "application/json");
+      const handled = await handleWorkflows(
+        req,
+        res,
+        getPathSegments(req.url || ""),
+        parseQueryParams(req.url || ""),
+        req.headers["x-agent-id"] as string | undefined,
+      );
+      if (!handled) {
+        res.writeHead(404);
+        res.end("{}");
+      }
+    });
+    baseUrl = `http://localhost:${await listenOnFreePort(server)}`;
+
+    const mcp = new McpServer({ name: "test-workflow-profile", version: "1.0.0" });
+    registerUpdateWorkflowTool(mcp);
+    const tools = (mcp as unknown as Record<string, unknown>)._registeredTools as Record<
+      string,
+      { handler: (args: unknown, extra: unknown) => Promise<unknown> }
+    >;
+    updateTool = (args) =>
+      tools["update-workflow"]!.handler(args, {
+        sessionId: "session-test",
+        requestInfo: { headers: { "x-agent-id": "agent-test" } },
+      });
+
+    await createModelProfile({
+      name: "wp-claude-repo-key",
+      harness: "claude",
+      model: "opus",
+      credentials: { CLAUDE_CODE_OAUTH_TOKEN: ["22222"] },
+    });
+    repoAgentId = (
+      await createAgent({
+        name: "wp-claude-repo",
+        isLead: false,
+        status: "idle",
+        harnessProvider: "claude",
+      })
+    ).id;
+    await updateAgentCredStatus(repoAgentId, READY);
+    const secret = { isSecret: true, exportToEnv: true, key: "CLAUDE_CODE_OAUTH_TOKEN" };
+    await upsertSwarmConfig({
+      ...secret,
+      scope: "agent",
+      scopeId: repoAgentId,
+      value: "sk-ant-oat01-secret-material-bbbbbbbb-22222",
+    });
+    const repo = await createSwarmRepo({
+      url: "https://github.com/acme/wp-widgets",
+      name: "wp-widgets",
+    });
+    await upsertSwarmConfig({
+      ...secret,
+      scope: "repo",
+      scopeId: repo.id,
+      value: "sk-ant-oat01-secret-material-aaaaaaaa-11111",
+    });
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  async function profiledWorkflow() {
+    counter++;
+    const definition = agentTaskDef({ agentId: repoAgentId, profile: "wp-claude-repo-key" });
+    expect(await workflowModelErrors(definition)).toEqual([]);
+    return await createWorkflow({ name: `workflow-profile-repo-${counter}`, definition });
+  }
+
+  test("PUT /api/workflows/{id} with only vcsRepo re-judges the stored definition", async () => {
+    const workflow = await profiledWorkflow();
+    const put = (body: unknown) =>
+      fetch(`${baseUrl}/api/workflows/${workflow.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "X-Agent-ID": crypto.randomUUID() },
+        body: JSON.stringify(body),
+      });
+
+    const moved = await put({ vcsRepo: "acme/wp-widgets" });
+    expect(moved.status).toBe(400);
+    expect(JSON.stringify(await moved.json())).toContain("credential-allowlist");
+    expect((await getWorkflow(workflow.id))?.vcsRepo ?? null).toBeNull();
+
+    // Control: an update that leaves the repo alone does not re-judge.
+    const renamed = await put({ description: "still in no repo" });
+    expect(renamed.status).toBe(200);
+  });
+
+  test("update-workflow with only vcsRepo re-judges the stored definition", async () => {
+    const workflow = await profiledWorkflow();
+    const result = (await updateTool({ id: workflow.id, vcsRepo: "acme/wp-widgets" })) as {
+      structuredContent?: { success: boolean; message: string };
+    };
+    expect(result.structuredContent?.success).toBe(false);
+    expect(result.structuredContent?.message).toContain("credential-allowlist");
+    expect((await getWorkflow(workflow.id))?.vcsRepo ?? null).toBeNull();
   });
 });

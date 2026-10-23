@@ -136,8 +136,8 @@ const deleteProfile = route({
 
 /**
  * Why a credential allowlist does not fit the profile, or null. Each var must
- * be a credential var of the harness (for its model, on harnesses that pick
- * the key by model prefix).
+ * be a credential var the harness loads for this model (harnesses that pick
+ * the key by model prefix load a subset).
  */
 function credentialsError(
   harness: ProviderName,
@@ -145,10 +145,11 @@ function credentialsError(
   credentials: ModelProfileCredentials | null | undefined,
 ): string | null {
   if (!credentials) return null;
+  // Only the vars the worker loads for this model (`selectCredentials`): an
+  // entry for any other var picks nothing, yet the profile check would still
+  // judge the agent's pool on it.
   const base = PROVIDER_CREDENTIAL_VARS[harness] ?? [];
-  const allowed = new Set(
-    base.length > 0 ? [...base, ...getModelAwareCredentialVars(harness, model)] : [],
-  );
+  const allowed = new Set(base.length > 0 ? getModelAwareCredentialVars(harness, model) : []);
   for (const [envVar, suffixes] of Object.entries(credentials)) {
     if (envVar === "CODEX_OAUTH") {
       return "A credential allowlist for CODEX_OAUTH is not supported in v1.";

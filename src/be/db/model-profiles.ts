@@ -214,8 +214,9 @@ export async function modelProfileReferences(
     [MODEL_PROFILE_CONFIG_KEY, name],
   );
   const tasks = await getDbClient().get<{ n: number }>(
-    `SELECT COUNT(*) AS n FROM agent_tasks t WHERE t.profile = ? AND ${TASK_HOLDS_PROFILE_SQL}`,
-    [name, repairWindowStart()],
+    `SELECT COUNT(*) AS n FROM agent_tasks t
+      WHERE (t.profile = ? OR t.resolvedProfile = ?) AND ${TASK_HOLDS_PROFILE_SQL}`,
+    [name, name, repairWindowStart()],
   );
   const schedules = await getDbClient().query<{ id: string }>(
     "SELECT id FROM scheduled_tasks WHERE profile = ? ORDER BY id",
@@ -229,7 +230,7 @@ export async function modelProfileReferences(
 }
 
 /**
- * Which reference trigger (migrations 220, 233) refused a write: `missing` when
+ * Which reference trigger (migrations 220, 237) refused a write: `missing` when
  * a task, a schedule or an agent default names a profile that does not exist.
  */
 export function modelProfileRefError(error: unknown): "missing" | null {
@@ -238,10 +239,12 @@ export function modelProfileRefError(error: unknown): "missing" | null {
 }
 
 /**
- * Delete a profile unless a task still holds it (`TASK_HOLDS_PROFILE_SQL`), an
+ * Delete a profile unless a task still holds it (`TASK_HOLDS_PROFILE_SQL`) as
+ * its ask or as the profile claim applied (`resolvedProfile`, which a paused
+ * task's resume re-reads for its credential allowlist), an
  * agent default names it, or a schedule names it. The check is part of the
  * DELETE statement, so a reference written after the caller's own count still
- * makes it `in-use`; the triggers in migrations 220 and 233 refuse the
+ * makes it `in-use`; the triggers in migrations 220 and 237 refuse the
  * opposite order (a reference written after this delete).
  */
 export async function deleteModelProfile(name: string): Promise<"deleted" | "missing" | "in-use"> {
@@ -250,7 +253,8 @@ export async function deleteModelProfile(name: string): Promise<"deleted" | "mis
       WHERE name = ?
         AND NOT EXISTS (
           SELECT 1 FROM agent_tasks t
-           WHERE t.profile = model_profiles.name AND ${TASK_HOLDS_PROFILE_SQL})
+           WHERE (t.profile = model_profiles.name OR t.resolvedProfile = model_profiles.name)
+             AND ${TASK_HOLDS_PROFILE_SQL})
         AND NOT EXISTS (
           SELECT 1 FROM swarm_config
            WHERE scope = 'agent' AND key = ? AND trim(value) = model_profiles.name)
