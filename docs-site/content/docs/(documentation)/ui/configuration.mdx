@@ -247,8 +247,9 @@ subprocess. Two layers harden it:
   processes are killed when a run ends. Runs wait for a free uid when the pool is full.
   Workflow `script` nodes share one uid, `SCRIPT_SANDBOX_UID_BASE - 1`, because they often
   reuse fixed `/tmp` paths across runs. A pinned `cwd` must be usable by that uid. The API
-  image's entrypoint sets `umask 077` and makes the data directory mode `700`, so the
-  sandbox user cannot read the database. The drop needs `CHOWN`, `DAC_OVERRIDE`, `FOWNER`,
+  image's entrypoint sets `umask 077`, makes the default data directory (`/app/data`) mode
+  `700` and the database files mode `600`, so the sandbox user cannot read the database.
+  A custom `DATABASE_PATH` directory keeps its mode; only the database files change. The drop needs `CHOWN`, `DAC_OVERRIDE`, `FOWNER`,
   `KILL`, `SETGID` and `SETUID`, which Docker grants by default. Without any of them the API
   keeps running scripts as its own uid.
 - **Exec deny.** The native script harness installs a seccomp filter before it loads the
