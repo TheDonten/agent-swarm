@@ -274,6 +274,16 @@ async function runScript(args: unknown, ctx: ScriptContext) {
       out.survival.reverted.push({ agentId: st.agentId, agentName: ag.name, field: st.field, runId: st.runId });
       if (dry) continue;
       try {
+        // trim-state lives in a KV namespace any agent can write. Re-apply only a text that a lead really wrote
+        // to this field before (context_versions keeps every profile version), never arbitrary KV text.
+        const seen = await q(
+          `SELECT 1 AS x FROM context_versions WHERE agentId = ? AND field = ? AND contentHash = ? AND changedByAgentId IN (SELECT id FROM agents WHERE isLead = 1) LIMIT 1`,
+          [st.agentId, st.field, await sha(String(st.afterText ?? ""))],
+        );
+        if (!seen.length) {
+          errors.push(`reapply ${st.agentId}:${st.field}: stored text is not a lead-written version of this field; skipped`);
+          continue;
+        }
         await ctx.swarm.profile_update({ agentId: st.agentId, [st.field]: st.afterText });
         const rr = await q(`SELECT ${st.field} AS body FROM agents WHERE id = ?`, [st.agentId]);
         const ok = (await sha(String(rr[0]?.body ?? ""))) === st.afterSha;

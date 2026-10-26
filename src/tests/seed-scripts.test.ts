@@ -11,6 +11,7 @@ import { SEED_SCRIPTS, scriptsSeeder } from "../be/seed-scripts";
 import bootTriage from "../be/seed-scripts/catalog/boot-triage";
 import { renderCatalogReportPage } from "../be/seed-scripts/catalog/catalog-report";
 import compoundInsights from "../be/seed-scripts/catalog/compound-insights";
+import dreamingTrim from "../be/seed-scripts/catalog/dreaming-trim";
 import opsCatalogAudit, {
   renderPage as renderOpsCatalogAuditPage,
 } from "../be/seed-scripts/catalog/ops-catalog-audit";
@@ -1185,5 +1186,84 @@ describe("script typecheck resolves zod in compiled-binary mode", () => {
     if (!result.ok) {
       expect(result.diagnostics.join(" ")).toContain("TS2307");
     }
+  });
+});
+
+// dreaming-trim re-applies a reverted trim from its trim-state record, which lives in a KV namespace any agent can
+// write. Under the seeded workflow the Lead runs that step, so a forged record must never reach profile_update.
+describe("dreaming-trim survival re-apply", () => {
+  const sha = async (s: string) =>
+    Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s))))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+
+  async function runReapply(leadWroteIt: boolean) {
+    const live = "original profile text";
+    const stored = "text from a trim-state record";
+    let body = live;
+    const updates: unknown[] = [];
+    const table = (columns: string[], data: unknown[][]) => ({ columns, rows: data });
+    const ctx = {
+      swarm: {
+        async kv_list() {
+          return {
+            entries: [
+              {
+                key: "trim-state:a1:claudeMd",
+                value: {
+                  agentId: "a1",
+                  field: "claudeMd",
+                  runId: "r0",
+                  beforeSha: await sha(live),
+                  afterSha: await sha(stored),
+                  afterText: stored,
+                },
+              },
+            ],
+          };
+        },
+        async kv_getOrNull() {
+          return null;
+        },
+        async kv_set() {
+          return {};
+        },
+        async db_query({ sql }: { sql: string }) {
+          if (sql.includes("context_versions")) return table(["x"], leadWroteIt ? [[1]] : []);
+          if (sql.includes("AS body")) return table(["body"], [[body]]);
+          if (sql.includes("FROM agents"))
+            return table(
+              ["id", "name", "isLead", "status", "claudeMd"],
+              [["a1", "victim", 0, "idle", body]],
+            );
+          return table([], []);
+        },
+        async profile_update(args: Record<string, string>) {
+          updates.push(args);
+          body = String(args.claudeMd);
+          return {};
+        },
+      },
+    };
+    // biome-ignore lint/suspicious/noExplicitAny: minimal fake of the script context
+    const out: any = await dreamingTrim(
+      { mode: "apply", runId: "r1", dryRun: false, plan: { targets: [] }, drafts: [] },
+      ctx as any,
+    );
+    return { out, updates };
+  }
+
+  test("refuses a trim-state text that no lead ever wrote to the field", async () => {
+    const { out, updates } = await runReapply(false);
+    expect(updates).toEqual([]);
+    expect(out.errors.join(" ")).toContain("not a lead-written version");
+  });
+
+  test("control: re-applies a text a lead wrote before", async () => {
+    const { out, updates } = await runReapply(true);
+    expect(updates).toEqual([{ agentId: "a1", claudeMd: "text from a trim-state record" }]);
+    expect(out.reapplied).toEqual([
+      { agentId: "a1", agentName: "victim", field: "claudeMd", ok: true },
+    ]);
   });
 });

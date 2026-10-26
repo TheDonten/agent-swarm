@@ -763,6 +763,10 @@ async function runScript(args: unknown, ctx: ScriptContext) {
           if (!rg.ok) { no("scrubber-corruption"); continue; }
           const row = { cutId, lane: "A", agentId: c.target.agentId, field, netChars: next.length - live.length, pinKey: pin.key };
           if (!v3Writes) { out.wouldRestore.push({ ...row, gate: dry ? "dryRun" : "v3Writes off" }); continue; }
+          // Cut ledgers and pre-images live in a KV namespace any agent can write. Restore a block only from a
+          // pre-image that was once the real text of this field (context_versions keeps every profile version).
+          const preSeen = await q(`SELECT 1 AS x FROM context_versions WHERE agentId = ? AND field = ? AND contentHash = ? LIMIT 1`, [c.target.agentId, field, await sha(pre)]);
+          if (!preSeen.length) { no("pre-image is not a recorded version of this field"); continue; }
           const beforeSha = await sha(live);
           const again = await readStored(field, c.target.agentId);
           if ((await sha(again?.body ?? "")) !== beforeSha) { no("field changed during restore"); continue; }
