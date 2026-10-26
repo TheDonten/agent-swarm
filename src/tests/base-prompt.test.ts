@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import {
   type BasePromptArgs,
   getBasePrompt,
+  getBasePromptWithParts,
   getTaskContextPrompt,
   truncateRepoClaudeMd,
 } from "../prompts/base-prompt";
@@ -1156,5 +1157,95 @@ describe("getBasePrompt: harness tool discovery", () => {
     const result = await getBasePrompt({ ...minimalArgs, traits: localTraits });
     expect(result).not.toContain(deferred);
     expect(result).toContain("Swarm tools are already in your tool list.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Request composition parts
+// ---------------------------------------------------------------------------
+
+describe("getBasePromptWithParts", () => {
+  const skills = [
+    { name: "alpha", description: "does alpha" },
+    { name: "beta", description: "does beta things" },
+  ];
+  const full: BasePromptArgs = {
+    ...minimalArgs,
+    name: "Tester",
+    description: "A test agent",
+    soulMd: "# Soul\n\nBe kind.\n\n\n\nReally.",
+    identityMd: "# Custom identity\n\nEdited.",
+    claudeMd: "# Notes\n\nCustom rules here.",
+    skillsSummary: skills,
+    mcpServers: ["context7"],
+  };
+  const matrix: Record<string, BasePromptArgs> = {
+    "claude worker": {
+      ...full,
+      provider: "claude",
+      traits: { ...localTraits, hasToolSearch: true, steerModes: ["queue"] },
+    },
+    "claude lead": { ...full, role: "lead", provider: "claude", traits: localTraits },
+    "scripts-only": { ...full, provider: "claude", scriptsOnly: true, traits: localTraits },
+    codex: { ...full, provider: "codex", traits: { ...localTraits, nativeSkillDiscovery: false } },
+    pi: { ...full, provider: "pi", traits: localTraits },
+    managed: { ...full, provider: "claude-managed", traits: managedTraits },
+    remote: { ...full, provider: "devin", traits: remoteTraits },
+    minimal: minimalArgs,
+  };
+  /** Parts that are text inside our prompt; skills_listing is harness-injected. */
+  const inPrompt = (kind: string) => kind !== "skills_listing";
+
+  for (const deployment of ["plain", "slack + steering + agent-fs"]) {
+    for (const [name, args] of Object.entries(matrix)) {
+      test(`${deployment} / ${name}: byte-identical prompt, parts sum to its length`, async () => {
+        if (deployment !== "plain") {
+          enableSlack();
+          process.env.STEERING_ENABLED = "true";
+          process.env.AGENT_FS_API_URL = "http://agent-fs.test";
+        }
+        const { prompt, parts } = await getBasePromptWithParts(args);
+        expect(prompt).toBe(await getBasePrompt(args));
+        const total = parts
+          .filter((part) => inPrompt(part.kind))
+          .reduce((sum, part) => sum + part.chars, 0);
+        expect(total).toBe(prompt.length);
+        expect(parts.every((part) => part.chars > 0)).toBe(true);
+      });
+    }
+  }
+
+  test("splits the composite into its sections and the persona", async () => {
+    const { parts } = await getBasePromptWithParts(matrix["claude worker"]!);
+    // The composite's own glue is only seam newlines, which collapsing removes.
+    const ids = parts.map((part) => part.id).filter((id) => id !== "system.session.worker");
+    expect(ids.slice(0, 7)).toEqual([
+      "persona",
+      "system.agent.role",
+      "system.agent.worker",
+      "system.agent.workspace",
+      "system.agent.memory",
+      "system.agent.communication",
+      "system.agent.secrets",
+    ]);
+    expect(ids).toContain("system.agent.tool_discovery.search");
+    expect(ids).toContain("system.agent.tools_skills");
+    expect(parts.find((part) => part.kind === "claude_md")?.chars).toBeGreaterThan(
+      full.claudeMd!.length,
+    );
+  });
+
+  test("native skill discovery adds a harness-side skills estimate; codex does not", async () => {
+    const claude = await getBasePromptWithParts(matrix["claude worker"]!);
+    const listing = claude.parts.find((part) => part.kind === "skills_listing");
+    expect(listing).toMatchObject({
+      fidelity: "estimate",
+      chars: "- alpha: does alpha\n- beta: does beta things\n".length,
+    });
+
+    // Codex gets the list inside tools_skills, so it is not counted twice.
+    const codex = await getBasePromptWithParts(matrix.codex!);
+    expect(codex.parts.some((part) => part.kind === "skills_listing")).toBe(false);
+    expect(codex.prompt).toContain("- /alpha: does alpha");
   });
 });
