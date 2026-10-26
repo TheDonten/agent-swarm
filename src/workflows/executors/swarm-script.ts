@@ -130,6 +130,7 @@ export class SwarmScriptExecutor extends BaseExecutor<
       source: resolved.source,
       args: config.args,
       fsMode: "none",
+      executor: resolved.script.executor,
       agentId: agentId ?? "workflow",
       mcpBaseUrl: getMcpBaseUrl(),
       egressSecrets: credentials.egressSecrets,
@@ -139,6 +140,10 @@ export class SwarmScriptExecutor extends BaseExecutor<
       apiConnections: getScriptApiConnectionDescriptors({ agentId: agentId ?? undefined }),
       mcpConnections: getScriptMcpConnectionDescriptors({ agentId: agentId ?? undefined }),
       timeoutMs: config.timeoutMs,
+      // The step watchdog aborts this when the node budget runs out, which
+      // kills the script process: a step reported as timed out must not go
+      // on to perform the script's side effects.
+      signal: meta.signal,
     });
     if (output.exitCode === 0 && !output.error && !output.runtimeError) {
       await touchScratchScriptLastUsed(resolved.script.id);
