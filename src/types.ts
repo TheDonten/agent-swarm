@@ -1384,12 +1384,27 @@ export const AgentSchema = z
 //
 // The cache-hit post-task path does NOT produce a new report; the row's
 // `reportedAt` deliberately stays at the last actual check.
+/** One pool member's live test. `suffix` is its last 5 chars, as in `api_key_status`. */
+export const AgentCredStatusKeyResultSchema = z
+  .object({
+    keyType: z.string(),
+    index: z.number(),
+    suffix: z.string(),
+    ok: z.boolean(),
+    error: z.string().optional(),
+    httpStatus: z.number().optional(),
+    latency_ms: z.number(),
+  })
+  .openapi("AgentCredStatusKeyResult");
+
 export const AgentCredStatusLiveTestSchema = z
   .object({
     ok: z.boolean(),
     error: z.string().nullable().default(null),
     latency_ms: z.number(),
     testedAt: z.number(), // unix ms
+    warning: z.string().optional(),
+    keys: z.array(AgentCredStatusKeyResultSchema).optional(),
   })
   .openapi("AgentCredStatusLiveTest");
 export type AgentCredStatusLiveTest = z.infer<typeof AgentCredStatusLiveTestSchema>;
@@ -3136,6 +3151,15 @@ export const WorkflowRunStepSchema = z
   })
   .openapi("WorkflowRunStep");
 export type WorkflowRunStep = z.infer<typeof WorkflowRunStepSchema>;
+
+/**
+ * Step of `GET /api/workflow-runs/{id}?fields=slim`: no `input`, the context
+ * snapshot taken when the step started. Loops repeat it once per iteration.
+ */
+export const WorkflowRunStepSlimSchema = WorkflowRunStepSchema.omit({ input: true }).openapi(
+  "WorkflowRunStepSlim",
+);
+export type WorkflowRunStepSlim = z.infer<typeof WorkflowRunStepSlimSchema>;
 
 // --- Wait State (workflow `wait` node side table) ---
 

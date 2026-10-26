@@ -830,6 +830,16 @@ export const CONFIGURATION_GROUPS: ConfigCatalogGroup[] = [
         docsUrl: `${DOCS}ui/configuration`,
       },
       {
+        key: "CONTEXT_BOUND_NOTE_TOKENS",
+        label: "Context-bound note threshold (tokens)",
+        description:
+          "When a worker session's latest main-thread request reaches this many tokens (input + cache read + cache write), the session gets one note per task telling it to finish the current step, store progress, and complete or defer instead of starting new exploration. Claude, Codex, pi, OpenCode, Amp and Claude Managed sessions get it. The note never blocks a tool call. Off by default: unset, empty, 0 or an invalid value means no note. Applies to new sessions. To try it on one agent first, set an agent-scoped row instead of this global one.",
+        kind: "number",
+        defaultValue: "off",
+        placeholder: "200000",
+        docsUrl: `${DOCS}ui/configuration`,
+      },
+      {
         key: "MODEL_WINDOW_EXHAUSTED_POLICY",
         label: "Model window exhausted policy",
         description:
@@ -906,6 +916,16 @@ export const CONFIGURATION_GROUPS: ConfigCatalogGroup[] = [
           "Keep only this many newest context_versions rows per agent and field. The newest version is never deleted. Leave unset to disable this table's sweep. Deletion permanently removes older profile history.",
         kind: "number",
         placeholder: "100",
+        docsUrl: `${DOCS}guides/deployment#database-retention`,
+      },
+      {
+        key: "SCRIPT_RUNS_RETENTION_DAYS",
+        label: "Script run retention",
+        description:
+          "Delete finished script_runs rows (completed, failed, cancelled, aborted) older than this many days, with their journal. Running and paused runs and runs with an idempotency key are kept. Leave unset to disable this table's sweep. Deletion permanently removes script run source, args and output.",
+        kind: "number",
+        unit: "days",
+        placeholder: "95",
         docsUrl: `${DOCS}guides/deployment#database-retention`,
       },
       {
@@ -1667,7 +1687,18 @@ export const CONFIGURATION_GROUPS: ConfigCatalogGroup[] = [
         label: "Primary use case",
         description: "Primary use case used to select peers for the fleet benchmark.",
         kind: "enum",
-        options: ["features", "bugs", "review", "ops", "docs", "data"],
+        options: [
+          "features",
+          "bugs",
+          "review",
+          "ops",
+          "docs",
+          "data",
+          "content",
+          "research",
+          "seo",
+          "admin",
+        ],
         defaultValue: "",
         docsUrl: `${DOCS}ui/configuration#company-profile`,
       },

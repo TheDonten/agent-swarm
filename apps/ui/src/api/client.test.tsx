@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 
+const TEST_CONNECTION = { id: "test", apiUrl: "https://api.example.test", apiKey: "" };
+// The client sends no request before a connection exists. A test sets this to null.
+let activeConnection: typeof TEST_CONNECTION | null = TEST_CONNECTION;
+
 mock.module("@/lib/config", () => ({
   getConfig: () => ({ apiUrl: "https://api.example.test", apiKey: "" }),
+  getActiveConnection: () => activeConnection,
 }));
 
 const { api, ApprovalRespondError } = await import("./client");
@@ -11,6 +16,23 @@ const originalFetch = globalThis.fetch;
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  activeConnection = TEST_CONNECTION;
+});
+
+describe("before a connection exists", () => {
+  test("rejects without sending a request", async () => {
+    activeConnection = null;
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return new Response("{}", { status: 200 });
+    }) as unknown as typeof fetch;
+
+    await expect(api.cancelApprovalRequest("request-id")).rejects.toThrow(
+      "Not connected to an API yet",
+    );
+    expect(calls).toBe(0);
+  });
 });
 
 describe("respondToApprovalRequest", () => {
@@ -270,6 +292,29 @@ describe("submitFeedback", () => {
     ).resolves.toBeUndefined();
   });
 
+  test("leaves out profile values the proxy catalog does not list yet", async () => {
+    let body: unknown;
+    globalThis.fetch = async (_url, init) => {
+      body = JSON.parse(String(init?.body));
+      return new Response(null, { status: 202 });
+    };
+
+    await api.submitFeedback("https://proxy.example.test/v1/feedback", {
+      ...input,
+      use_case: "content",
+      user_function: "marketing",
+      team_size: "2-10",
+    });
+    expect(body).toEqual({ ...input, team_size: "2-10" });
+
+    await api.submitFeedback("https://proxy.example.test/v1/feedback", {
+      ...input,
+      use_case: "docs",
+      user_function: "founder",
+    });
+    expect(body).toEqual({ ...input, use_case: "docs", user_function: "founder" });
+  });
+
   test("allows HTTP feedback submissions to loopback hosts", async () => {
     globalThis.fetch = async (url) => {
       expect(url).toBe("http://localhost:3013/v1/feedback");
@@ -307,5 +352,38 @@ describe("submitFeedback", () => {
       api.submitFeedback("https://proxy.example.test/v1/feedback", input),
     ).rejects.toThrow("Failed to submit feedback: 429");
     expect(call).toBe(1);
+  });
+});
+
+describe("fetchWorkflowRun", () => {
+  const body = {
+    run: { id: "run-1", workflowId: "wf-1", status: "completed" },
+    steps: [{ id: "step-1", runId: "run-1", nodeId: "poll", status: "completed" }],
+  };
+
+  function captureUrl(): { url?: string } {
+    const seen: { url?: string } = {};
+    globalThis.fetch = (async (url: string) => {
+      seen.url = url;
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+    return seen;
+  }
+
+  test("reads the full run by default", async () => {
+    const seen = captureUrl();
+    const run = await api.fetchWorkflowRun("run-1");
+    expect(seen.url).toBe("https://api.example.test/api/workflow-runs/run-1");
+    expect(run).toEqual({ ...body.run, steps: body.steps, parent: undefined });
+  });
+
+  test("the slim read asks for fields=slim and keeps the same shape", async () => {
+    const seen = captureUrl();
+    const run = await api.fetchWorkflowRunSlim("run-1");
+    expect(seen.url).toBe("https://api.example.test/api/workflow-runs/run-1?fields=slim");
+    expect(run).toEqual({ ...body.run, steps: body.steps, parent: undefined });
   });
 });

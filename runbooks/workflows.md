@@ -316,10 +316,71 @@ A `sub-workflow` node runs another workflow as a child run and waits for it.
 - Recursion is rejected: a workflow cannot invoke itself or any workflow already running in its
   ancestor runs, and nesting stops at 16 levels below the root run (`MAX_SUB_WORKFLOW_DEPTH`). The
   checks run when the node executes, not when the definition is saved.
+- Cancelling a run cancels its child runs too (see [Cancelling a run](#cancelling-a-run)).
 - Not yet supported (tracked in the sub-workflow issue): pinning the child's definition version
-  (the child runs its live definition), cancelling the child when the parent is cancelled, and a
-  per-node timeout. As a `foreach` body, a run retry gives the failed item a new child run (see
+  (the child runs its live definition) and a per-node timeout. As a `foreach` body, a run retry gives the failed item a new child run (see
   [Retry with preserved siblings](#retry-with-preserved-siblings)).
+
+## Cancelling a run
+
+`cancelWorkflowRun` (`src/workflows/resume.ts`) backs the HTTP route
+(`POST /api/workflow-runs/{id}/cancel`), the `cancel-workflow-run` MCP tool and the dashboard. An
+approval cancel and the approval auto-cancel sweep cancel their run through the same
+`cancelWorkflowRunRows`.
+
+- The cancel covers the run and every run below it: children of every attempt of every
+  `sub-workflow` step, through runs that already ended. The tree comes only from stored links
+  (`child.parentStepId` → step → run). Run outputs, names and trigger data are never used.
+- One `BEGIN IMMEDIATE` transaction reads the tree and, for each run, cancels its open tasks
+  (found by the indexed `agent_tasks.workflowRunId`; a retry detaches only the step link, so tasks
+  of earlier attempts are included), its non-terminal steps, its pending approvals and its queued
+  step retries (`nextRetryAt` is cleared). Every non-terminal run becomes `cancelled` with the
+  reason. A completed, failed or skipped descendant keeps its status, error and output; only its
+  leftover open work is cancelled.
+- Steps, retries and descendant runs are written with one `UPDATE` per 500 runs, and dependents of
+  the cancelled tasks are looked up in one scan over open tasks, only when the tree has open tasks. Only the root goes through `updateWorkflowRun`, so
+  a root that is itself a child still wakes its parent step. Measured on a laptop: 2017 runs in
+  about 0.3 s, 10k runs in about 1.4 s, about 140 µs per run (mostly the per-task `cancelTask`).
+- A root that is completed, failed or skipped is refused, as before. A `cancelled` root is walked
+  again, so a repeat cancel finishes descendants an earlier cancel (or an older release) left open.
+  Reasons already written are kept.
+- A repeat cancel of a tree with nothing left open (no live run, open step, queued retry, open
+  task or pending approval) is answered in a read-only transaction: no write lock, no dependents
+  scan, no cancel writes. The guards below keep a cancelled tree from gaining work, so that answer
+  holds. It still returns the tree's run ids, so Slack posts an earlier cancel could not deliver
+  (an outage releases the claim) are retried; a delivered post is never sent again.
+  Concurrent `cancelWorkflowRun` calls for one run in the API process share one cancel.
+- There is no size limit: the engine admits any number of children per run, and every tree it
+  admitted stays cancellable. The walk goes level by level and stops at the first run it reaches
+  twice. A cycle in the links or a chain deeper than `WORKFLOW_RUN_TREE_MAX_DEPTH` (32, twice the
+  engine's `MAX_SUB_WORKFLOW_DEPTH`) throws, and nothing commits. Any other error rolls back the
+  whole tree too.
+- After commit: worker nudges and task lifecycle events (queued with `afterCommit`), then the Slack
+  update of every cancelled approval in the tree whose post is not delivered yet
+  (`listUndeliveredCancelledApprovalRequestIds` in `src/be/db/approvals.ts`, one query per 500 runs). A failed Slack post
+  is logged; it does not undo the cancel, and the next cancel of the tree retries it.
+
+After the commit, nothing in the tree starts new engine work. The guard is
+`getRunLineageBlock(runId)` (`src/be/db/workflow-runs.ts`): it blocks a run that is cancelled, has a
+cancelled ancestor, or has a broken parent link, a cycle or too deep a chain. Completed and failed
+ancestors do not block. Each write that starts work checks it inside its own transaction, so a
+cancel either commits first and is seen there, or sees the new row and cancels it:
+
+| Path | Guard |
+|---|---|
+| Child run insert | `isParentStepAttemptCurrent`: step attempt `running`, run live, lineage clear |
+| Workflow task insert (`createTaskExtended` with `workflowRunStepId`) | `getStepExecutionBlock`; throws `WorkflowStepNotExecutableError` |
+| Approval request linked to an existing run (HITL executor, `POST /api/approval-requests`), with or without a step | created `cancelled` |
+| Step claim (`executeStep`), foreach item claim | no step is claimed |
+| Checkpoint fences, `checkpointStepWaiting` | nothing is written |
+| Task / approval / wait / child-run callbacks, `scheduleTaskStepRetry` | the step is not claimed and nothing routes |
+| Retry poller claim | the retry is dropped (`nextRetryAt` cleared); a failed run is never revived |
+| Manual `retryFailedRun` | refused, run stays `failed` |
+| Run finalizers (walk, `finalizeOrWait`, recovery, retry poller) | the run is not completed or parked |
+
+The cancel is a database guarantee. It does not stop a process that is already running (a script,
+an LLM call, an agent session until the worker sees its task cancelled) and does not undo external
+side effects that already happened.
 
 ## Agent-task steps cut by a deploy
 
@@ -332,10 +393,17 @@ A deploy drain or heartbeat remediation fails an in-flight workflow-step task wi
 - An explicit node `retry` always wins. `retry: { maxRetries: 0 }` is the opt-out for a node with
   external side effects that must not run twice.
 - A second cut exhausts the implicit retry and follows `onNodeFailure`.
-- Foreach children (`<foreachId>#<key>`) are not covered: the retry poller resolves the node by
-  exact id (`src/workflows/retry-poller.ts`) and cannot re-dispatch a child step. Automatic per-item
-  retry is a follow-up to #2029; until then, a cut item follows its fan-out's failure policy, and a
-  fail-fast run is resumed with `retry-workflow-run`, which reruns only the failed items.
+- A foreach child (`<foreachId>#<key>`) with an `agent-task` body gets the same retry. The parent
+  foreach node's `retry` applies to its items (the body carries none), else
+  `SUPERSEDE_RETRY_POLICY` on a cut, so `retry: { maxRetries: 0 }` on the foreach opts every item
+  out. A queued item is not settled: the join stays open and the item keeps its `concurrency` slot.
+  When the retry is due, the retry poller (`src/workflows/retry-poller.ts`) flips the item back to
+  `pending` and drives the fan-out, which starts it with a fresh task; its result settles into the
+  join like any other item. A fail-fast failure of a sibling cancels a queued item with the rest of
+  the queue. A queued item never revives a failed run: a cut whose run already failed is recorded as
+  the item's failure, and when another branch fails the run the poller retires the queued retry
+  instead of running it. `retry-workflow-run` then gives the item one new attempt. Exhausted
+  retries and every other failure follow the fan-out's failure policy as before.
 
 ## Script node types
 
@@ -724,6 +792,49 @@ The provider registry (`SYSTEM_ONE_HOSTS` in `src/workflows/executors/system-one
 Each workflow run persists the trusted human requester in `workflow_runs.created_by` when one is available. MCP resolves the caller from the invoking agent's owned source or current task; authenticated HTTP uses its trusted request user or owned agent-task context; schedules use their creator; and Kapso routing uses the resolved canonical sender. Generic unsigned or HMAC webhooks and creatorless schedules stay unattributed, and an ownerless trigger never falls back to the workflow author.
 
 Retry, resume, and recovery reconstruct requester context from the workflow run. Agent-task nodes created after a restart therefore keep the original `requestedByUserId` instead of losing attribution at the checkpoint boundary. Historical runs with `created_by = NULL` are not backfilled because no trustworthy requester can be recovered.
+
+## Idempotent create and trigger
+
+`POST /api/workflows` and `POST /api/workflows/{id}/trigger` take an optional `Idempotency-Key` header (1-255 visible ASCII characters). Without it, nothing changes. With it, the server accepts one operation per key and answers every retry with that operation's original status and body, plus `Idempotent-Replayed: true`.
+
+Guarantee boundary: the server accepts the request once. Node side effects inside the run are not made exactly-once by this.
+
+| Request | Result |
+|---|---|
+| No key | Same as before; nothing recorded |
+| New key | Normal handling; the key is recorded if the operation is accepted |
+| Same key, equivalent body | Original status and body; nothing created, started or resumed |
+| Same key, different body | `409`, nothing runs |
+| Same key, its workflow was deleted | `410`; the key stays taken and nothing is re-created |
+| Concurrent identical requests | One workflow or run; the others get its result |
+
+### Scope and fingerprint
+
+The scope is `(principal, operation, targetId, sha256(key))`, unique in `workflow_idempotency_keys`:
+
+- `principal`: `user:<id>` for user tokens, `agent:<id>` for agent session tokens, `controller:<id>`, and for the swarm API key `agent:<X-Agent-ID>` or `operator`. It never contains a bearer value, so rotating a token keeps the scope. Under the shared swarm key, X-Agent-ID only keeps workers' keys apart; it is not an access boundary. Guest page sessions get `400`.
+- `operation`: `workflow.create` or `workflow.trigger`. `targetId` is the workflow id for trigger, empty for create.
+- The fingerprint is a SHA-256 of the canonical body: object keys sorted (code-unit order), array order kept, nothing redacted first. For create it is the zod-parsed body, so unknown fields are ignored as the route schema ignores them. Workflow state (definition, status) is not part of it.
+
+### Transaction boundaries
+
+- Create: one transaction checks the scope, inserts the workflow, and inserts the record with the response snapshot (workflow plus `warnings`, computed before the transaction).
+- Trigger: the record is inserted by the `accept` hook of `startWorkflowExecution` (`src/workflows/engine.ts`), inside the transaction that commits the run and its initial state (`createRunWithInitialState`), or inside the transaction around the day's setup-failure run. Cooldown skips, readiness and input failures, and setup failures are all accepted runs.
+- A concurrent request blocks on `BEGIN IMMEDIATE`, then finds the winner's record in its own transaction, throws `IdempotencyKeyTakenError`, rolls back and replays. The unique index backs this across processes. The loser never walks the graph, alerts or emits telemetry.
+- Nothing is held open across network calls: readiness warnings, input resolution and the graph walk run outside the transaction.
+- After the commit, a crash before the walk leaves a `running` run with its context; recovery walks it, and a retry replays the stored result. A failure after the commit (walk error, lost response) never deletes the record.
+
+### Order of checks
+
+Authentication runs first on every request; a revoked token gets `401` and no replay. Then the record is looked up, before definition validation (create) and before the existence, enabled, cooldown, readiness and trigger-schema checks (trigger). Errors before acceptance (`400`, `403`, `404`, trigger schema) do not record the key.
+
+### Storage and lifecycle
+
+- `responseBody` is sealed with `sealJson` (registered in `SEALED_REPLAY_COLUMNS`). The key and the request are stored only as hashes.
+- Deleting a workflow (`deleteWorkflowRows`) clears `responseBody` and sets `resourceDeletedAt` on every record naming it. That removes the extra copy of the definition and keeps the key taken.
+- No TTL: records are never reused or pruned automatically.
+
+Code: `src/be/db/workflow-idempotency.ts`, `src/http/idempotency-key.ts`, `src/http/workflows.ts`. Tests: `src/tests/workflow-idempotency.test.ts`.
 
 ## Trigger schema
 

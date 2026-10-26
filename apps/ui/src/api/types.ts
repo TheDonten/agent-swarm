@@ -346,11 +346,23 @@ export interface AgentRuntimeInstancesResponse {
   staleThresholdMinutes: number;
 }
 
+export interface AgentCredStatusKeyResult {
+  keyType: string;
+  index: number;
+  suffix: string;
+  ok: boolean;
+  error?: string;
+  httpStatus?: number;
+  latency_ms: number;
+}
+
 export interface AgentCredStatusLiveTest {
   ok: boolean;
   error?: string | null;
   latency_ms: number;
   testedAt: number;
+  warning?: string;
+  keys?: AgentCredStatusKeyResult[];
 }
 
 export interface AgentBedrockStatusModel {
@@ -890,6 +902,7 @@ export interface SessionTreeGroup extends SessionSectionCounts {
 
 /** `GET /api/session-tree`: every visible group plus the section counts. */
 export interface SessionTreeResponse {
+  labels?: Record<string, string>;
   groups: SessionTreeGroup[];
   inbox: SessionSectionCounts;
   later: SessionSectionCounts;
@@ -1071,6 +1084,11 @@ export interface SessionDetailResponse {
   access?: SessionAccess;
   /** The root's requester. Null for Slack/schedule sessions; omitted by older servers. */
   owner?: SessionOwner | null;
+  /**
+   * The root's group with the list's rule: a source thread with two or more
+   * roots is its own group. Omitted by older servers (use `detailGroupKey`).
+   */
+  groupKey?: string;
   /** Pending approval requests in the chain. Missing means none. */
   approvals?: SessionApproval[];
   /** The viewer's read state (the list's rule). Omitted with no picked user. */
@@ -1780,6 +1798,15 @@ export interface WorkflowsResponse {
 
 /** List row of a run: no `context`, which `GET /api/workflow-runs/{id}` serves. */
 export type WorkflowRunSummary = Omit<WorkflowRun, "context">;
+
+/** Step of `GET /api/workflow-runs/{id}?fields=slim`: no `input`, the context snapshot. */
+export type WorkflowRunStepSlim = Omit<WorkflowRunStep, "input">;
+
+/** `GET /api/workflow-runs/{id}?fields=slim`: the run without `context`, steps without `input`. */
+export interface WorkflowRunSlimWithSteps extends WorkflowRunSummary {
+  steps: WorkflowRunStepSlim[];
+  parent?: WorkflowRunParent;
+}
 
 /** One page of `GET /api/workflows/{id}/runs`, newest first. */
 export interface WorkflowRunsPage {
@@ -3012,6 +3039,9 @@ export interface ApiKeyStatus {
   /** Subscription plan id (see `GET /api/keys/plans`), when known. */
   plan: string | null;
   planSource: "manual" | "detected" | "estimated" | null;
+  /** The provider rejected this key in a worker live test (`HTTP 401`), until it passes or leaves the pool. */
+  lastValidationError?: string | null;
+  lastValidationFailedAt?: string | null;
   rateLimitWindows: Record<
     string,
     {
@@ -3397,6 +3427,8 @@ export type TelemetryEnableVia = "banner" | "settings" | "benchmark";
 export interface StatusActivity {
   agents_online: number;
   leads_online: number;
+  /** Leads with status idle or busy (not the heartbeat). Absent on servers that predate it. */
+  leads_ready?: number;
   recent_tasks_count: number;
 }
 
@@ -3441,6 +3473,8 @@ export interface CombReviewBatchInput {
   commentIds: string[];
   /** The file or folder the batch is sent from ("/docs/a.md", "/docs/"). */
   scopePath: string;
+  /** A note for the lead about the whole batch, at most `COMB_NOTE_MAX` characters. */
+  note?: string;
 }
 
 export interface CombReviewBatchResult {
@@ -3449,6 +3483,11 @@ export interface CombReviewBatchResult {
   sent: string[];
   skipped: CombSkippedComment[];
   repaired: CombRepairedComment[];
+  /**
+   * With a new task only: `online` (a lead got it), `offline` (every lead is
+   * offline), or `none` (no lead, so it waits in the pool). Absent on older servers.
+   */
+  lead?: "online" | "offline" | "none";
 }
 
 export interface StatusAgentFs {
@@ -4020,6 +4059,10 @@ export interface OnboardingProviderSignal {
   state: "unverified" | "configured" | "verified";
   workers: number;
   verifiedWorkers: number;
+  /** The latest live test failed: its error. */
+  error?: string | null;
+  /** The latest live test passed, but some pool keys failed: names them. */
+  warning?: string | null;
 }
 
 export interface OnboardingSignals {
@@ -4084,6 +4127,70 @@ export interface CodexDevicePollResponse {
   status: "pending" | "complete" | "failed" | "expired";
   slot?: number;
   error?: string;
+}
+
+// ─── Credential pool keys (`/api/config/pool-keys`) ─────────────────────────
+
+/** From the global `api_key_status` row of the key (same `keyType` and `keySuffix`). */
+export type PoolKeyStatus = "ok" | "rejected" | "rate_limited" | "unchecked";
+
+/** One key of a stored credential pool. Only the suffix leaves the server. */
+export interface PoolKey {
+  /** Position in the stored pool, 0-based. */
+  index: number;
+  /** The last 5 characters, the same as `api_key_status.keySuffix`. */
+  suffix: string;
+  status: PoolKeyStatus;
+  /** The last validation error when `rejected`, else null. */
+  error: string | null;
+  checkedAt: string | null;
+  rateLimitedUntil: string | null;
+}
+
+export interface PoolKeysResponse {
+  /** The env var name. */
+  key: string;
+  /** `stored`: a global swarm_config row. `env`: the deployment env only. */
+  source: "stored" | "env" | "none";
+  /** True when `source` is `env`: change the keys in the deployment env. */
+  readOnly: boolean;
+  keys: PoolKey[];
+}
+
+export type PoolKeyCheckResult = "verified" | "rejected" | "not_tested";
+
+/** The instant check of one new key in `POST /api/config/pool-keys`. */
+export interface PoolKeyCheck {
+  suffix: string;
+  result: PoolKeyCheckResult;
+  httpStatus: number | null;
+  /** Short and scrubbed. Never contains the key. */
+  error: string | null;
+}
+
+export interface PoolKeysAddResponse extends PoolKeysResponse {
+  checks: PoolKeyCheck[];
+}
+
+// ─── Codex ChatGPT accounts (`/api/codex-oauth/accounts`) ───────────────────
+
+export type CodexAccountStatus = "ok" | "needs_login" | "unchecked";
+
+export interface CodexAccount {
+  /** 0 for the legacy `codex_oauth` row when no `codex_oauth_0` exists. */
+  slot: number;
+  /** `codex_oauth_<n>` or `codex_oauth`. */
+  configKey: string;
+  legacy: boolean;
+  suffix: string | null;
+  plan: string | null;
+  email: string | null;
+  status: CodexAccountStatus;
+}
+
+export interface CodexAccountsResponse {
+  /** Sorted by slot. */
+  accounts: CodexAccount[];
 }
 
 // ─── Fleet benchmark (`GET /api/fleet-benchmark`) ───────────────────────────

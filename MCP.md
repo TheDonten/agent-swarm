@@ -493,7 +493,7 @@ Perform task pool operations: create unassigned tasks, claim/release tasks from 
 |-----------|------|----------|---------|-------------|
 | `action` | `create \| claim \| release \| accept \| reject \| to_backlog \| from_backlog` | Yes | - | The action to perform: 'create' creates an unassigned task, 'claim' takes a task from pool, 'release' returns task to pool, 'accept' accepts offered task, 'reject' declines offered task, 'to_backlog' moves task to backlog, 'from_backlog' moves task from backlog to pool. |
 | `task` | `string` | No | - | Task description (required for 'create'). |
-| `key` | `unknown` | No | - | Logical namespace for a created task. Defaults to a shared/task:<id>/ resource key. |
+| `key` | `unknown` | No | - | Logical namespace for a created task. Default: the Slack or chat source key of the task (for example shared/slack/<channel>/thread:<ts>/), else shared/task:<id>/. |
 | `taskType` | `string` | No | - | Task type (e.g., 'bug', 'feature'). |
 | `tags` | `array` | No | - | Tags for filtering (e.g., ['urgent', 'frontend']). |
 | `priority` | `number` | No | - | Priority 0-100, default 50. |
@@ -1537,6 +1537,7 @@ Get details of a workflow run by ID, including all steps and their statuses.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `id` | `string` | Yes | - | Workflow run ID |
+| `fields` | `full \| slim` | No | - | `slim` omits run.context and each step's input (a context snapshot per step, large in runs with loops). Outputs, errors and retry fields stay. Default: full. |
 
 ### retry-workflow-run
 
@@ -1552,7 +1553,7 @@ Resume the same failed workflow run from its failed step(s); completed steps are
 
 **Cancel Workflow Run**
 
-Cancel a running or waiting workflow run. Cancels all non-terminal steps and their associated tasks.
+Cancel a running or waiting workflow run and every child run below it. Cancels their non-terminal steps, tasks, pending approvals and queued retries in one transaction; finished child runs keep their status. Repeating the cancel on a cancelled run finishes any child runs still open.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
@@ -1578,7 +1579,7 @@ Send a state and typed questions (noul, choice, score) to a SystemOne decision h
 
 **Request human input**
 
-Create an approval request and return at once with the request id and URL. The answer arrives later as a hitl-follow-up task. Supports multiple question types: approval (yes/no), text, single-select, multi-select, and boolean. Returns the request ID and URL for the human to respond. The dashboard renders each label and description as markdown: put long content in description, fence code with a language, and put an image URL alone on its own line to show it. No Slack message is sent; share the URL yourself.
+Create an approval request and return at once with the request id and URL. The answer arrives later as a hitl-follow-up task. Supports multiple question types: approval (yes/no), text, single-select, multi-select, boolean, and config. Returns the request ID and URL for the human to respond. config asks a person to set one swarm config key on the dashboard; secrets are stored encrypted and you receive only {key, scope, isSecret, status, updatedAt}, never the value. The dashboard renders each label and description as markdown: put long content in description, fence code with a language, and put an image URL alone on its own line to show it. No Slack message is sent; share the URL yourself.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|

@@ -410,6 +410,28 @@ Workflows support a cooldown period to prevent rapid re-triggering:
 
 A second trigger within the cooldown window results in a run with `skipped` status.
 
+### Safe retries (`Idempotency-Key`)
+
+`POST /api/workflows` and `POST /api/workflows/{id}/trigger` accept an optional `Idempotency-Key` header. Generate one key per logical operation (a UUID works) and send the same key with the same body on every retry of it, including after a network timeout. The server accepts the operation once: a retry gets the original status and body, with `Idempotent-Replayed: true`, and creates no second workflow or run. A concurrent duplicate, a lost response and a server restart are all covered.
+
+```bash
+# One key per logical trigger; resend the same $KEY on every retry of it.
+KEY=$(uuidgen)
+curl -X POST "$MCP_BASE_URL/api/workflows/$WORKFLOW_ID/trigger" \
+  -H "Authorization: Bearer $AGENT_SWARM_API_KEY" \
+  -H "Idempotency-Key: $KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"pr": {"number": 42}}'
+```
+
+- The key is scoped to the authenticated caller, the operation and (for trigger) the workflow. Another caller's identical key is a separate operation. It is not a credential.
+- The same key with a different body returns `409`. A request rejected before it is accepted (validation, trigger schema, disabled workflow) does not use up the key.
+- A retry of a trigger returns the original `runId` and `skipped`, even if the workflow was disabled or edited since. It never starts, resumes or waits for the run.
+- If the workflow is deleted, a retry returns `410`. The key is never reused, and nothing is created again.
+- Accepted keys do not expire.
+
+This guarantees the server accepts a request once. It does not make the nodes of a run exactly-once: a run's external side effects follow the usual retry and recovery rules. It is separate from cooldown, which skips runs by time for every caller. See [runbooks/workflows.md § Idempotent create and trigger](https://github.com/desplega-ai/agent-swarm/blob/main/runbooks/workflows.md#idempotent-create-and-trigger).
+
 ### Trigger payload validation (`triggerSchema`)
 
 Workflows can attach an optional JSON Schema to validate the `triggerData` payload across every trigger path — manual `/trigger`, webhooks, schedules, and the `trigger-workflow` MCP tool. When set, mismatched payloads are rejected with HTTP 400 (or an MCP error) **before** the workflow starts: no run is created, no nodes execute. When unset, any payload is accepted (current default).
@@ -523,7 +545,11 @@ For orchestration that needs more than 5 minutes, launch a durable one-off scrip
 
 ### Cancelling a Workflow Run
 
-Running or waiting workflow runs can be cancelled using the `cancel-workflow-run` MCP tool. Cancellation terminates all non-terminal steps and their associated tasks. An optional reason can be provided for audit purposes.
+Running or waiting workflow runs can be cancelled using the `cancel-workflow-run` MCP tool, the API (`POST /api/workflow-runs/{id}/cancel`) or the dashboard. An optional reason can be provided for audit purposes.
+
+The cancel covers the run and every child run below it, including children of earlier retry attempts. In one transaction it cancels their non-terminal steps, tasks, pending approvals and queued retries, and marks every unfinished run `cancelled`. A child run that already completed or failed keeps its status and result. After the cancel, no step, task, child run or retry starts anywhere in that tree, and a late task result or approval does not resume it. Cancelling an already cancelled run again finishes any child runs still open.
+
+Cancellation does not stop work that is already executing outside the database, such as a running script or an agent session before its worker sees the task cancelled, and it does not undo external side effects.
 
 ### Per-Step Validation
 
@@ -634,7 +660,7 @@ Every workflow update creates a snapshot in the version history table, recording
 | `patch-workflow-node` | Partially update a single node in a workflow with automatic version snapshots |
 | `delete-workflow` | Delete a workflow and its run history |
 | `trigger-workflow` | Manually trigger a workflow execution |
-| `get-workflow-run` | Get details of a specific workflow run |
+| `get-workflow-run` | Get details of a specific workflow run; pass `fields: "slim"` to omit the run context and step inputs |
 | `list-workflow-runs` | List paginated slim run rows (20 by default, 100 max); use `includeContext: true` only when a page needs full contexts |
 | `retry-workflow-run` | Retry a failed workflow run |
 | `cancel-workflow-run` | Cancel a running or waiting workflow run |
@@ -645,6 +671,14 @@ omits full `context` and trigger data to keep routine history queries small.
 Follow `page.hasMore` / `page.nextOffset` for pagination, call
 `get-workflow-run` to retrieve one run with its steps and context, or pass
 `includeContext: true` for an explicitly full page.
+
+`get-workflow-run` (and `GET /api/workflow-runs/{id}`) returns the full run by
+default: the run `context` plus each step's `input`, a snapshot of the context
+when the step started. In runs with loops (polling, `wait`, iterations) that
+grows with steps × context size. Pass `fields: "slim"` (`?fields=slim` over
+HTTP) to drop both and keep statuses, outputs, errors, diagnostics, retry
+fields and the parent link, which is enough for monitoring and deciding what
+to do next.
 
 ## Dashboard UI
 

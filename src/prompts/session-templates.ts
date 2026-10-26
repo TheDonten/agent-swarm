@@ -202,7 +202,7 @@ agent-fs is the shared drive between agents and people. Documents (reports, dige
 Pages: only for polished artifacts shared with a wider audience or explicitly requested; see \`pages\` skill.
 A tool a person will use, with data and actions: build an app. See the \`apps\` skill.
 Link env: \`APP_URL\` for pages, \`MCP_BASE_URL\` for the API, \`AGENT_FS_LIVE_URL\` for files. Report missing variables.
-For a file anyone outside the swarm opens, use an \`agent-fs share-create\` link; \`AGENT_FS_LIVE_URL\` links are for signed-in teammates.
+Give people the live app link \`\${AGENT_FS_LIVE_URL}/file/~/<org>/<drive>/<path>\`. Make an \`agent-fs share-create\` link only when the requester asks for one or the reader has no agent-fs login.
 `,
   variables: [],
   category: "system",
@@ -348,6 +348,30 @@ Task: {{task}}{{progressLine}}
     {
       name: "progressLine",
       description: 'Empty, or a newline plus "Current Progress: <latest progress>"',
+    },
+  ],
+  category: "system",
+});
+
+/**
+ * One-time note injected into a worker session once its latest main-thread
+ * request crosses CONTEXT_BOUND_NOTE_TOKENS (`renderContextBoundNote`, via
+ * `src/hooks/context-bound-note.ts`).
+ */
+registerTemplate({
+  eventType: "system.agent.context.bound_note",
+  header: "",
+  defaultBody:
+    "Context is {{contextTokens}} tokens{{contextShare}}. Keep this task bounded: finish the current step, store-progress, and complete or defer instead of starting new exploration.",
+  variables: [
+    {
+      name: "contextTokens",
+      description: "Prompt size of the latest request (input + cache read + cache write tokens)",
+    },
+    {
+      name: "contextShare",
+      description:
+        'How full the model\'s context window is, e.g. " (21% of the 1,000,000-token window)". Empty when the window is unknown',
     },
   ],
   category: "system",

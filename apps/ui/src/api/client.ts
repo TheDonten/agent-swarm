@@ -1,6 +1,8 @@
 import type { LiveModelsCatalog } from "@/lib/agent-runtime-models";
-import { getConfig } from "@/lib/config";
+import { getActiveConnection, getConfig } from "@/lib/config";
+import { reportedUseCase, reportedUserFunction } from "../../../../src/utils/company-profile";
 import { DASHBOARD_USER_HEADER, dashboardUserIdFor } from "../lib/dashboard-user";
+import { withAddressSpace } from "../lib/local-network";
 import type {
   AcpRuntimeConfig,
   Agent,
@@ -182,7 +184,9 @@ import type {
   Workflow,
   WorkflowRun,
   WorkflowRunParent,
+  WorkflowRunSlimWithSteps,
   WorkflowRunStep,
+  WorkflowRunStepSlim,
   WorkflowRunSummary,
   WorkflowRunsPage,
   WorkflowRunWithSteps,
@@ -190,6 +194,19 @@ import type {
   WorkflowsResponse,
   WorkflowVersion,
 } from "./types";
+
+/**
+ * Every request in this file goes through this `fetch`, not the global one.
+ * With no stored connection it fails without a request: a request to the
+ * default address would open the browser's local network prompt before the
+ * `/setup` connect step explains it. A request to a local API gets the Local
+ * Network Access hint (`lib/local-network.ts`).
+ */
+const fetch = (input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
+  if (!getActiveConnection()) return Promise.reject(new Error("Not connected to an API yet"));
+  const url = input instanceof Request ? input.url : String(input);
+  return globalThis.fetch(input, withAddressSpace(url, init));
+};
 
 /**
  * Thrown by `api.triggerWorkflow` when the server returns the frozen
@@ -363,6 +380,38 @@ async function runtimePoolResponse<T>(res: Response, label: string): Promise<T> 
     throw new RuntimePoolApiError(
       body.error || body.message || `${label} (${res.status})`,
       res.status,
+    );
+  }
+  return (await res.json()) as T;
+}
+
+/**
+ * A failed credential pool or Codex account request. `message` is the
+ * server's `error` text. A 422 from `POST /api/config/pool-keys` (a key was
+ * rejected, nothing was saved) also carries the per-key `checks`.
+ */
+export class CredentialApiError extends Error {
+  readonly status: number;
+  readonly checks: import("./types").PoolKeyCheck[];
+  constructor(message: string, status: number, checks: import("./types").PoolKeyCheck[] = []) {
+    super(message);
+    this.name = "CredentialApiError";
+    this.status = status;
+    this.checks = checks;
+  }
+}
+
+/** Parse a credential route response or throw a `CredentialApiError`. */
+async function credentialResponse<T>(res: Response, label: string): Promise<T> {
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      checks?: import("./types").PoolKeyCheck[];
+    };
+    throw new CredentialApiError(
+      body.error || `${label} (HTTP ${res.status}).`,
+      res.status,
+      Array.isArray(body.checks) ? body.checks : [],
     );
   }
   return (await res.json()) as T;
@@ -910,6 +959,66 @@ class ApiClient {
     return res.json();
   }
 
+  /** The stored ChatGPT accounts (`codex_oauth_<n>` slots), sorted by slot. */
+  async fetchCodexAccounts(): Promise<import("./types").CodexAccountsResponse> {
+    const url = `${this.getBaseUrl()}/api/codex-oauth/accounts`;
+    const res = await fetch(url, { headers: this.getHeaders() });
+    return credentialResponse(res, "Could not load the ChatGPT accounts");
+  }
+
+  /** Delete one ChatGPT account slot. Returns the accounts that are left. */
+  async removeCodexAccount(slot: number): Promise<import("./types").CodexAccountsResponse> {
+    const url = `${this.getBaseUrl()}/api/codex-oauth/accounts/${encodeURIComponent(String(slot))}`;
+    const res = await fetch(url, { method: "DELETE", headers: this.getHeaders() });
+    return credentialResponse(res, "Could not remove the ChatGPT account");
+  }
+
+  /** The keys of one credential pool var. Only suffixes leave the server. */
+  async fetchPoolKeys(key: string): Promise<import("./types").PoolKeysResponse> {
+    const url = `${this.getBaseUrl()}/api/config/pool-keys?${new URLSearchParams({ key })}`;
+    const res = await fetch(url, { headers: this.getHeaders() });
+    return credentialResponse(res, "Could not load the keys");
+  }
+
+  /**
+   * Check and append keys to a pool (`value` may hold several, comma
+   * separated). Throws a `CredentialApiError`: 422 with `checks` when a key
+   * is rejected (nothing is saved), 400 or 409 with the server's reason.
+   */
+  /** `baseUrl` is for the check only: null tests the provider default, undefined the stored URL. */
+  async addPoolKeys(
+    key: string,
+    value: string,
+    baseUrl?: string | null,
+  ): Promise<import("./types").PoolKeysAddResponse> {
+    const url = `${this.getBaseUrl()}/api/config/pool-keys`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: this.getHeaders(),
+      body: JSON.stringify({ key, value, ...(baseUrl !== undefined ? { baseUrl } : {}) }),
+    });
+    return credentialResponse(res, "Could not add the key");
+  }
+
+  /**
+   * Remove the pool member at `index`. The server checks `suffix` against
+   * that member and answers 409 when the list changed under the caller.
+   */
+  async removePoolKey(args: {
+    key: string;
+    index: number;
+    suffix: string;
+  }): Promise<import("./types").PoolKeysResponse> {
+    const params = new URLSearchParams({
+      key: args.key,
+      index: String(args.index),
+      suffix: args.suffix,
+    });
+    const url = `${this.getBaseUrl()}/api/config/pool-keys?${params}`;
+    const res = await fetch(url, { method: "DELETE", headers: this.getHeaders() });
+    return credentialResponse(res, "Could not remove the key");
+  }
+
   /** Live harness switch for one agent (worker reconciles within ~10s). */
   async setAgentHarnessProvider(
     id: string,
@@ -951,7 +1060,12 @@ class ApiClient {
       throw new Error("Invalid feedback endpoint");
     }
 
-    const body = JSON.stringify(data);
+    // The proxy rejects a profile value its catalog does not list yet: leave it out.
+    const body = JSON.stringify({
+      ...data,
+      use_case: reportedUseCase(data.use_case),
+      user_function: reportedUserFunction(data.user_function),
+    });
     let response: Response;
 
     try {
@@ -1020,11 +1134,17 @@ class ApiClient {
    */
   async sendCombReviewBatch(data: CombReviewBatchInput): Promise<CombReviewBatchResult> {
     const url = `${this.getBaseUrl()}/api/comb/review-batches`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: this.getHeaders(),
-      body: JSON.stringify(data),
-    });
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: this.getHeaders(),
+        body: JSON.stringify(data),
+      });
+    } catch {
+      // No answer at all (offline, DNS, CORS): status 0.
+      throw new CombSendError("Cannot reach the swarm API", 0);
+    }
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new CombSendError(
@@ -1543,15 +1663,23 @@ class ApiClient {
   }
 
   async fetchWorkflowRun(id: string): Promise<WorkflowRunWithSteps> {
-    const url = `${this.getBaseUrl()}/api/workflow-runs/${id}`;
+    return this.fetchWorkflowRunDetail<WorkflowRun, WorkflowRunStep>(id, "");
+  }
+
+  /** The run without its `context` and its steps without `input`, for views that show statuses. */
+  async fetchWorkflowRunSlim(id: string): Promise<WorkflowRunSlimWithSteps> {
+    return this.fetchWorkflowRunDetail<WorkflowRunSummary, WorkflowRunStepSlim>(id, "?fields=slim");
+  }
+
+  private async fetchWorkflowRunDetail<Run, Step>(
+    id: string,
+    query: string,
+  ): Promise<Run & { steps: Step[]; parent?: WorkflowRunParent }> {
+    const url = `${this.getBaseUrl()}/api/workflow-runs/${id}${query}`;
     const res = await fetch(url, { headers: this.getHeaders() });
     if (!res.ok) throw new Error(`Failed to fetch workflow run: ${res.status}`);
-    const data = (await res.json()) as {
-      run: WorkflowRun;
-      steps: WorkflowRunStep[];
-      parent?: WorkflowRunParent;
-    };
-    // Reshape { run, steps, parent } into WorkflowRunWithSteps
+    const data = (await res.json()) as { run: Run; steps: Step[]; parent?: WorkflowRunParent };
+    // Reshape { run, steps, parent } into one object
     return { ...data.run, steps: data.steps, parent: data.parent };
   }
 

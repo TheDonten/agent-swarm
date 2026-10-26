@@ -411,12 +411,20 @@ export function AgentRuntimeSettings({ agent }: { agent: Agent }) {
     }
   }
 
+  // A saved runtime reaches the agent when its next task starts: a running task keeps its own.
+  function savedToast() {
+    const running = agent.capacity?.current ?? (agent.status === "busy" ? 1 : 0);
+    toast.success(
+      `Runtime settings saved. Applies to the next task${running > 0 ? ` (${running} running)` : ""}.`,
+    );
+  }
+
   function save() {
     if (devinSelected) {
       setHarnessProvider.mutate(
         { id: agent.id, harnessProvider: "devin" },
         {
-          onSuccess: () => toast.success("Runtime settings updated"),
+          onSuccess: savedToast,
           onError: (err) => toast.error(err instanceof Error ? err.message : "Update failed"),
         },
       );
@@ -467,7 +475,7 @@ export function AgentRuntimeSettings({ agent }: { agent: Agent }) {
           : {}),
       },
       {
-        onSuccess: () => toast.success("Runtime settings updated"),
+        onSuccess: savedToast,
         onError: (err) => toast.error(err instanceof Error ? err.message : "Update failed"),
       },
     );

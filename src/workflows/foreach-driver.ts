@@ -11,6 +11,7 @@ import {
   updateWorkflowRun,
   updateWorkflowRunStep,
 } from "../be/db";
+import { getRunLineageBlock, getWorkflowRunStatus } from "../be/db/workflow-runs";
 import type {
   Workflow,
   WorkflowDefinition,
@@ -41,6 +42,7 @@ import {
   cancelQueuedForeachChildren,
   FOREACH_TERMINAL_STEP_STATUSES,
   type ForeachChildOutcome,
+  isRetryPending,
   latestForeachChildren,
   settleForeachChild,
 } from "./foreach-join";
@@ -352,8 +354,8 @@ async function parkRunIfRunning(runId: string): Promise<void> {
 
 /**
  * Flip `pending` children to `running`, in item order, while fewer than the
- * fan-out's `concurrency` cap are in flight (`running` or `waiting`, latest
- * attempt rows only), and collect unowned `running` ones. Ownership is registered before commit, so no other
+ * fan-out's `concurrency` cap are in flight (`running`, `waiting` or queued
+ * for a retry, latest attempt rows only), and collect unowned `running` ones. Ownership is registered before commit, so no other
  * drive can see a claimed row without also seeing it owned.
  */
 async function claimChildren(
@@ -367,6 +369,10 @@ async function claimChildren(
     // so concurrent drives (a settlement's drive and the recovery sweep)
     // serialize here and never exceed the cap together.
     await getDbClient().transaction(async () => {
+      // A cancel of the run (or of an ancestor) that committed first wins.
+      const status = await getWorkflowRunStatus(runId);
+      if (status !== "running" && status !== "waiting") return;
+      if (await getRunLineageBlock(runId)) return;
       const children = latestForeachChildren(
         def,
         parentNode.id,
@@ -379,7 +385,8 @@ async function claimChildren(
         }
       }
       const inFlight = children.filter(
-        (child) => child.status === "running" || child.status === "waiting",
+        (child) =>
+          child.status === "running" || child.status === "waiting" || isRetryPending(child),
       ).length;
       let free = foreachConcurrencyCap(parentNode) - inFlight;
       for (const child of children) {

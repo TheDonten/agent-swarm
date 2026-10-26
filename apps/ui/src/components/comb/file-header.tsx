@@ -1,10 +1,12 @@
 import { useAgentFsStat } from "@/api/hooks/use-agent-fs";
 import { FolderTrail } from "@/components/comb/breadcrumbs";
 import { DownloadButton, OpenInAgentFsButton } from "@/components/comb/file-actions";
+import { CopyPathButton, FileMenuButton } from "@/components/comb/file-menu";
 import { UpdatedChip } from "@/components/comb/live-indicator";
 import { PinButton } from "@/components/comb/pin-button";
 import { PresenceAvatars } from "@/components/comb/presence-avatars";
 import { VersionsMenu } from "@/components/comb/review/versions-menu";
+import { ShareButton } from "@/components/comb/share-dialog";
 import { useAuthorLabel } from "@/components/comb/use-author-label";
 import { MiddleTruncation } from "@/components/ui/middle-truncation";
 import type { StatResult } from "@/lib/agent-fs/types";
@@ -61,7 +63,7 @@ function FileFacts({ file, stat }: { file: DrivePath; stat: StatResult }) {
 
 /**
  * The other people on the file, then its actions as icon buttons: Versions,
- * Pin, Download, Open in agent-fs.
+ * Pin, Share link, Copy path, Download, Open in agent-fs, and the file menu.
  */
 export function FileActions({ file }: { file: DrivePath }) {
   const stat = useFileStat(file);
@@ -72,8 +74,14 @@ export function FileActions({ file }: { file: DrivePath }) {
       {/* step-10: Versions menu (compare an older version with the current one). */}
       <VersionsMenu file={file} stat={stat} />
       <PinButton target={file} className="size-8" />
-      <DownloadButton file={file} bytes={stat.size} iconOnly />
-      <OpenInAgentFsButton target={file} iconOnly />
+      <ShareButton file={file} />
+      {/* Phones keep the subtitle readable: these three are in the ... menu too. */}
+      <span className="hidden sm:contents">
+        <CopyPathButton target={file} />
+        <DownloadButton file={file} bytes={stat.size} iconOnly />
+        <OpenInAgentFsButton target={file} iconOnly />
+      </span>
+      <FileMenuButton target={file} header />
     </>
   );
 }

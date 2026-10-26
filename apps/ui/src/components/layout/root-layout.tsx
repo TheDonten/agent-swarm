@@ -20,7 +20,7 @@ import { useCurrentUser } from "@/contexts/current-user-context";
 import { useConfig } from "@/hooks/use-config";
 import { useLaterNotifier } from "@/hooks/use-later-notifier";
 import { CREDENTIAL_URL_PARAMS, withoutConnectionParams } from "@/lib/connection-url-params";
-import { MAIN_GUTTER } from "@/lib/main-gutter";
+import { MAIN_GUTTER, MAIN_GUTTER_NO_TOP } from "@/lib/main-gutter";
 import { cn } from "@/lib/utils";
 import { AppFooter } from "./app-footer";
 import { AppHeader } from "./app-header";
@@ -56,9 +56,9 @@ function IdentityGate() {
  * `history.replaceState`, which React Router never sees. Its location still
  * holds them, and any page that copies the search params (a session tab, a
  * filter) would put the key back in the address bar. Drop them from the
- * router's copy too.
+ * router's copy too. `/setup` (outside this layout) mounts it as well.
  */
-function ConnectionParamsCleanup() {
+export function ConnectionParamsCleanup() {
   const location = useLocation();
   const navigate = useNavigate();
   const stripped = withoutConnectionParams(location.search, CREDENTIAL_URL_PARAMS);
@@ -82,9 +82,15 @@ export function RootLayout() {
   const { pathname, search, hash } = useLocation();
   const { config, isConfigured } = useConfig();
   // The unified Home (`/`) owns its own internal padding so the full-bleed
-  // canvas can reach the content-area edges; every other route gets the
-  // standard gutter.
-  const mainPadding = pathname === "/" ? "p-0" : MAIN_GUTTER;
+  // canvas can reach the content-area edges. Comb (`/file`) drops the top
+  // gutter: its header (path, file actions) sits right under the app header.
+  // Every other route gets the standard gutter.
+  const mainPadding =
+    pathname === "/"
+      ? "p-0"
+      : pathname === "/file" || pathname.startsWith("/file/")
+        ? MAIN_GUTTER_NO_TOP
+        : MAIN_GUTTER;
 
   // No connection yet: the full-page `/setup` flow starts at step 1 (connect)
   // and returns here after connecting.

@@ -7,10 +7,13 @@ import { CombLayoutProvider, useCombLayout } from "@/components/comb/comb-layout
 import { ConnectCard } from "@/components/comb/connect-card";
 import { OpenInAgentFsButton } from "@/components/comb/file-actions";
 import { FileActions, FileSubtitle, FileTitle } from "@/components/comb/file-header";
+import { FileDialogsProvider } from "@/components/comb/file-menu";
 import { FileView } from "@/components/comb/file-view";
 import { FolderView } from "@/components/comb/folder-view";
 import { CombPresenceProvider } from "@/components/comb/presence-context";
-import { LeftPanel, LeftPanelSheet } from "@/components/comb/side-panels";
+import { CombSearchButton } from "@/components/comb/search-dialog";
+import { SendTrayButton } from "@/components/comb/send-tray";
+import { FullWidthButton, LeftPanel, LeftPanelSheet } from "@/components/comb/side-panels";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageSkeleton } from "@/components/shared/page-skeleton";
 import { Button } from "@/components/ui/button";
@@ -19,6 +22,7 @@ import { useConfig } from "@/hooks/use-config";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { fileRedirectPath } from "@/lib/agent-fs/state";
 import { type CombLocation, parseCombSplat } from "@/lib/comb/paths";
+import { cn } from "@/lib/utils";
 
 /** Comb: the swarm's agent-fs drive, read with the human's own agent-fs key. */
 export default function CombPage() {
@@ -123,7 +127,9 @@ function ConnectedView() {
         orgId={location.orgId}
         driveId={location.driveId}
       >
-        <CombWorkspace location={location} />
+        <FileDialogsProvider current={location.path}>
+          <CombWorkspace location={location} />
+        </FileDialogsProvider>
       </CombPresenceProvider>
     </CombLayoutProvider>
   );
@@ -138,12 +144,19 @@ function CombWorkspace({ location }: { location: CombLocation }) {
   const inline = layout?.inline ?? true;
   const file = location.isFolder ? null : location;
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3">
+    <div className="flex min-h-0 flex-1 flex-col gap-2">
       <CombHeader
         lead={inline ? null : <LeftPanelSheet location={location} />}
         title={file ? <FileTitle file={file} /> : <CombBreadcrumbs location={location} />}
         subtitle={file ? <FileSubtitle file={file} /> : null}
         actions={file ? <FileActions file={file} /> : null}
+        search={
+          <>
+            <SendTrayButton drive={location} />
+            <FullWidthButton />
+            <CombSearchButton drive={location} />
+          </>
+        }
       />
       <div className="flex min-h-0 flex-1 gap-3">
         {inline ? <LeftPanel location={location} /> : null}
@@ -151,7 +164,11 @@ function CombWorkspace({ location }: { location: CombLocation }) {
           {file ? (
             <FileView key={`${file.orgId}/${file.driveId}:${file.path}`} file={file} />
           ) : (
-            <FolderView folder={location} />
+            // Keyed per folder: a new folder starts with its own filter (`?filter=`).
+            <FolderView
+              key={`${location.orgId}/${location.driveId}:${location.path}`}
+              folder={location}
+            />
           )}
         </section>
       </div>
@@ -162,18 +179,21 @@ function CombWorkspace({ location }: { location: CombLocation }) {
 /**
  * The Comb header: the title with its subtitle, the actions, and the account.
  * One height for files and folders, so the panels below never move. On phones
- * the actions move to the subtitle row, so the name keeps the width.
+ * the actions move to the subtitle row, so the name keeps the width. Search
+ * stays next to the account on every width.
  */
 function CombHeader({
   lead,
   title,
   subtitle,
   actions,
+  search,
 }: {
   lead?: ReactNode;
   title: ReactNode;
   subtitle?: ReactNode;
   actions?: ReactNode;
+  search?: ReactNode;
 }) {
   const wide = useMediaQuery("(min-width: 640px)");
   const actionGroup = actions ? (
@@ -192,7 +212,8 @@ function CombHeader({
         ) : null}
       </div>
       {wide ? actionGroup : null}
-      <div className={wide && actionGroup ? "ml-2" : undefined}>
+      <div className={cn("flex shrink-0 items-center gap-0.5", wide && actionGroup && "ml-2")}>
+        {search}
         <CombAccountMenu />
       </div>
     </div>

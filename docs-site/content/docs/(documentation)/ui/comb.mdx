@@ -3,7 +3,7 @@ title: "Comb (beta)"
 description: "Review agent-written agent-fs files in the dashboard: comment on passages, mention teammates, send comments to the swarm, and review the changes"
 ---
 
-**Comb** shows the swarm's agent-fs drive inside the dashboard. Humans open files that agents wrote, comment on passages, and mention teammates. A comment that carries `@swarm` goes to the lead. The agent answers with a new file version and a reply. The human reviews the diff and resolves the thread.
+**Comb** shows the swarm's agent-fs drive inside the dashboard. Humans open files that agents wrote, comment on passages, and mention teammates. **Send to swarm** gives the open comments to the lead as one task. The agent answers with a new file version and a reply. The human reviews the diff and resolves the thread.
 
 Comb reads and comments only. Humans do not edit files in Comb. A revert to an earlier version is the only change that a human makes to file content.
 
@@ -15,7 +15,7 @@ Comb reads and comments only. Humans do not edit files in Comb. A revert to an e
 
 | agent-fs feature | What it adds | Without it |
 | --- | --- | --- |
-| `comment-path-prefix` | The **Open comments** panel of a folder, and **Send N to swarm** for a folder | The folder panel does not show |
+| `comment-path-prefix` | The **Open comments** panel of a folder (send and resolve in bulk) | The folder panel does not show |
 | `drive-members` | Author names, and the member list for the mention picker | Authors show as a short user id. The mention picker does not show |
 | `comment-mentions` | `@name` mentions and the **Mentions** list in the notification bell | The picker and the Mentions list do not show |
 | `change-stream` | Live updates (the header shows **Live**) | Comb checks for changes every 10 seconds (the header shows **Polling**) |
@@ -50,26 +50,104 @@ An existing drive member keeps their role. A viewer can read files and comments 
 
 ## Browse
 
-The left rail shows the drive as a tree. A folder opens as a grid of its files. Comb shows these file types in the page:
+The left panel has three tabs: **Files** (the drive as a tree), **Recent**, and **Favorites**. It stays as you leave it while you open files. The right panel has **Comments** and, for a markdown file with headings, **Outline**. A folder opens as a grid of its files. Each file shows one icon for its kind (markdown, image, audio, video, PDF, HTML, code, data, table, archive). Comb shows these file types in the page:
 
-- Markdown, rendered. HTML files show as source code.
+- Markdown, rendered.
 - Code and other text files, with line numbers.
-- PDF, images, and video.
+- HTML files as source code, with a **Preview** tab (see [HTML preview](#html-preview)).
+- PDF, images, video, and audio (mp3, wav, flac, aac, m4a, ogg, opus).
 - CSV and TSV files as a table, with a **Source** view.
 
 Other files show **Download** and **Open in agent-fs**.
 
-**Pin to sidebar** on a file or folder adds it under **Comb** in the sidebar. The swarm API stores the pins for the key that the dashboard uses: the operator key, or your user token.
+### Find files
+
+- **Filter files** on top of the Files tab narrows the tree to the files whose names match, across the whole drive (the agent-fs `find` op, the best 50). Type 2 characters or more. Escape clears it. An agent-fs without `find` filters the folders the tree has loaded.
+- **Filter this folder** in a folder header keeps the folder's own items whose names hold every word you type, and lists matching files in its subfolders under them. The filter is in the URL (`?filter=`), so you can share it, and Back brings it back.
+
+### File menu
+
+Hover a row in the tree and click **...**, or right-click a row in the tree or the folder grid (a long press on a phone). The same menu is under **...** in a file header:
+
+| Item | Does |
+| --- | --- |
+| **Open**, **Open in new tab** | Opens the file or folder in Comb |
+| **Copy link**, **Copy path** | Copies the Comb link, or the drive path (`/docs/plan.md`) |
+| **Share...** | Makes a share link (files, see [Share links](#share-links)) |
+| **Add to favorites** | Stars it (see [Home, Recent, and Favorites](#home-recent-and-favorites)) |
+| **Download** | Downloads the file |
+| **New file...**, **New folder...** | Creates one in the folder. A name like `notes/todo.md` also makes the folders. A new folder holds an empty `.keep` file. |
+| **Rename...** | Renames or moves the file (edit its full path). agent-fs writes it as a new version at the new path. Its stars move with it. The old path keeps its history and its comments. |
+| **Delete...** | Deletes the file. Its versions are kept (`agent-fs revert` brings it back). Its comments are removed. |
+| **Open in agent-fs** | Opens it in the agent-fs live UI |
+
+**New**, **Rename**, and **Delete** use the agent-fs `write`, `mv`, and `rm` ops, like the live UI, and need the editor role in the drive. A name in the tree that does not fit shows in full on hover. **Copy path** is also an icon in each file and folder header.
+
+### Search
+
+Click the search icon in the header, or press `/`. Pick a mode, or press Tab and Shift+Tab to move between them:
+
+| Mode | agent-fs op | Finds |
+| --- | --- | --- |
+| **File** | `find` | File names, close matches too. Needs 2 characters and agent-fs 0.18.5 or later. |
+| **Semantic** | `search` | Files about the topic, by meaning and keywords. Without an embedding provider, agent-fs returns keyword results only. |
+| **Text** | `fts` | The exact words inside files. |
+
+Search covers the whole swarm drive. Image results show a small preview. Enter opens the selected file. The search is in the URL (`?q=` and `?mode=`): share the link to share the search. Back closes it, and Back from an opened result shows the search again.
+
+### Share links
+
+**Share link** in the file header makes a public, read-only link to the file (the agent-fs `share-create` op). Pick how long it works: 1 hour, 24 hours, 3 days, or 7 days. Comb copies the link. Anyone with the link can open the file without an agent-fs account until it expires. Revoke a link with `agent-fs share-revoke --token <link>`. The button shows when agent-fs reports the `share-links` feature.
+
+### Upload
+
+**Upload** in a folder header, or a drop on the folder view, uploads files into that folder. A dropped folder keeps its structure. Comb uploads 3 files at a time and shows the progress. A file over the agent-fs upload limit (`maxUploadBytes`, 50 MB by default) is not sent. When a file with the same name is already there, pick **Keep both** (Comb uploads it as `name (1).ext`) or **Skip**. To replace a file, use the agent-fs live UI. Uploads need the editor role in the drive.
+
+### HTML preview
+
+An HTML file opens on **Source**, where comments anchor. **Preview** runs the page in a sandboxed frame:
+
+- The page loads from a 15-minute agent-fs site link to its folder, so its relative styles, images, and scripts load.
+- The frame comes from the agent-fs host, and its sandbox gives the page no origin. The page cannot read the dashboard, its local storage, or agent-fs cookies, and it cannot navigate the dashboard tab. Scripts, forms, popups, and dialogs run. A popup keeps the sandbox, so a site that needs its own storage can break in it.
+- A page at the drive root asks first, because its site link covers the whole drive for 15 minutes.
+
+Preview shows when agent-fs reports the `html-sites` feature.
+
+### Home, Recent, and Favorites
+
+The drive root is the Comb home. The left panel starts collapsed there, because the home lists the files itself. It opens again in any folder or file, or with a click on its icon strip. The home shows these lists above the folder:
+
+| List | What it shows | Where it is stored |
+| --- | --- | --- |
+| **In progress** | Each unfinished swarm task that open comments wait on, with those comments under it. Shows only while a task runs. | The comments in agent-fs, the task status in the swarm API |
+| **Favorites** | Files and folders you starred | agent-fs, for your agent-fs account (the `favorites` feature). The agent-fs live UI shows the same stars. |
+| **Recently viewed** | The last 20 files you opened | This browser only |
+| **Recently changed** | The newest version of each changed file, and who wrote it | agent-fs (`recent` op) |
+
+The left panel shows the full lists: **Recent** (pick **Viewed** or **Changed**) and **Favorites**. The star in a file or folder header adds it to Favorites. Favorites also show under **Comb** in the sidebar.
+
+Before Comb used agent-fs stars, it kept them in the swarm API. The first time a browser connects Comb to an agent-fs with the `favorites` feature, Comb copies those stars to your agent-fs account and skips the ones whose file is gone. The swarm API keeps its copy: an agent-fs without the feature, or a browser that is not connected, still lists them.
+
+### Full width
+
+On a markdown file, **Full width** in the header (or `F`) lets the text run as wide as its pane, without the reading width. The side panels stay. The choice stays in this browser.
+
+### Frontmatter, images, and diagrams
+
+- A YAML block at the top of a markdown file shows as **Properties**: lists as chips, links as links, nested values as YAML. Click its title to collapse it. The choice stays in this browser. YAML that does not parse (for example a value with `: ` in it) is read line by line and marked **Not valid YAML**.
+- Images and mermaid diagrams show **Maximize** and **Comment** on hover. **Maximize** shows the asset as large as the screen, with **Actual size** and **Download** (a diagram downloads as SVG). A wide diagram fits the page width.
 
 ## Comment
 
 - Select a passage in a markdown or text file, then click **Comment** (or press `C`). The comment anchors to that passage.
+- **Comment** on an image or a diagram (on hover, or in **Maximize**) anchors the comment to the asset's source lines, because agent-fs anchors comments on text and lines only. An asset with a comment gets an outline, and a bold one while its comment is selected. The agent-fs live UI shows an image comment on its line. It shows a diagram comment as **Lost**, because its diagrams carry no line numbers.
 - **Comment on file** adds a comment about the whole file.
+- **Add comment** saves the comment. It does not send it to the swarm (see [Send comments to the swarm](#send-comments-to-the-swarm)).
 - Reply, **Resolve**, and **Reopen** work on every thread.
 
 Anchors follow the text across versions. A thread shows **Moved** when the text changed and Comb found the closest match. It shows **Lost** when the passage is gone.
 
-A draft stays in this browser until you send it. If agent-fs cannot be reached, the comment waits under **Not sent** in the comment rail. Retry it from there.
+A draft stays in this browser until you add it. If agent-fs cannot be reached, the comment waits under **Not saved** in the comment rail. Retry it from there.
 
 ### Mentions
 
@@ -77,21 +155,34 @@ Type `@` to open the member picker. Only a person that you pick from the list ge
 
 ### `@swarm`
 
-Put `@swarm` in a comment to mark it for the swarm. A marked comment does nothing until you send it.
+`@swarm` in a comment flags it for the swarm: the passage gets its own color. A flagged comment is not sent until you send it. You do not need `@swarm` to send a comment.
 
 ## Send comments to the swarm
 
-Three buttons send comments. Each click creates **one** task for the lead, with every selected comment in it.
+Comments are drafts for the swarm until you send them, like page feedback. Any open comment that was not sent yet can go. Each send creates **one** task for the lead, with every checked comment in it.
 
 | Button | Where | What it sends |
 | --- | --- | --- |
-| **Send to swarm** | On a thread whose first comment has `@swarm` | That thread |
-| **Send N** | The comment rail header of a file | The open `@swarm` threads of the file |
-| **Send N to swarm** | The **Open comments** panel of a folder | The open `@swarm` threads of every file under the folder |
+| **Send to swarm** | On a thread | That thread |
+| **Send to swarm** | The send bar under a file's comments ("N not sent") | The checked comments of the file |
+| **Send to swarm** | The **Open comments** panel of a folder, with comments checked | The checked comments |
+| **Send N** | The Comb header, on every page | Your unsent comments from every file, grouped by file |
 
-Comb asks you to confirm before it sends. One batch holds at most 50 comments. Send again for the rest.
+The dialog lists the comments, all checked, and takes an optional **Note for the lead** (at most 4000 characters). The note goes into the task text. An operator who customized the `comb.review.batch` template must add `{{note_block}}` to it, or the note is left out. One batch holds at most 50 comments. Send again for the rest. **N not sent** in the send bar shows only those comments.
 
 The task has the source `comb`. The swarm posts a reply on each sent comment, which shows as "Sent to the swarm · task ...". A comment that the swarm already received is skipped on the next send.
+
+The task goes to the lead. With no lead, it waits unassigned in the pool, and the toast says so. With an offline lead, it waits for the lead to come back.
+
+When a send fails, nothing is sent:
+
+| Answer | Why |
+| --- | --- |
+| 400 | The comments are not on the swarm drive, or an id is not valid. |
+| 403 | You cannot create tasks. Ask a swarm admin. |
+| 409 | Every comment was skipped (already sent, resolved, a reply, or gone). |
+| 502 | agent-fs could not read one of the comments. Try again. |
+| 503 | agent-fs or the swarm drive is not set up, or an operator turned off a Comb review template. |
 
 ### What the agent does
 
@@ -102,6 +193,15 @@ The lead handles the batch or delegates it to one worker, so only one agent edit
 3. Replies on the comment with what it changed.
 
 The agent resolves a comment only when the comment asks for it or the change is trivially complete. When a comment needs a human decision, the agent replies and mentions the author.
+
+## Resolve comments in bulk
+
+The **Open comments** panel of a folder lists the open comments of every file under it. Check comments one by one, by file, or all at once. **Any age** narrows the list to comments older than 7 or 30 days. With comments checked:
+
+- **Resolve** resolves them, 4 at a time (agent-fs resolves one comment per call). **Undo** in the toast reopens them.
+- **Send to swarm** sends them as one task.
+
+Resolving needs the editor role in the drive.
 
 ## Review the changes
 
@@ -147,7 +247,9 @@ The dashboard and the API then behave as they do without Comb. Comments, mention
 
 - The agent-fs key lives in this browser's local storage, separately for each swarm API and agent-fs URL. The dashboard sends it only to agent-fs, never to the swarm API. **Disconnect** removes it.
 - The dashboard saves its query cache in local storage. File contents and comments never go into it.
-- Comb shows HTML files as source code and never runs them.
+- Comb runs an HTML file only when you click **Preview**, in a sandboxed frame from the agent-fs host (`sandbox="allow-scripts allow-forms allow-popups allow-modals"`, no `allow-same-origin`, no sandbox-escaping popups, no referrer). The page can read the files of its folder for 15 minutes, through its site link.
+- Search snippets show as text. Comb never renders file content from a snippet as HTML.
+- A share link is public until it expires. Anyone who gets it can open the file.
 - The swarm API receives only comment ids when you send. It reads the comments from agent-fs with its own key.
 
 ## Troubleshooting

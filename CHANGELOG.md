@@ -6,11 +6,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.5.4] - 2026-10-25
+
+### Added
+- Hooks: a one-time context-bound note for long worker sessions. When the latest main-thread request reaches `CONTEXT_BOUND_NOTE_TOKENS` (off by default), the agent is told once per task to finish the current step, store progress, and complete or defer. Claude gets it from the PostToolUse hook; Codex, pi, OpenCode, Amp and Claude Managed get it as mid-turn steering. It can be enabled per agent with an agent-scoped config row (#2401).
+- Extensions: a blocked `pre.task.create` (or a rejected model/agent rewrite) emits `post.task.blocked` once per attempt, carrying the blocking extension, the attempt's origin and requester, and a scrubbed reason and description (#2402).
+- Workflows: `POST /api/workflows` and `POST /api/workflows/{id}/trigger` take an optional `Idempotency-Key` header. Retries with the same key replay the original status and body instead of creating a second workflow or run (#2380).
+
+### Changed
+- Bun 1.4.4 for `packageManager` and every Dockerfile pin (fixes CVE-2026-111497) (#2397).
+- Worker image bumps claude-code, acp, `@anthropic-ai/sdk`, amp, grok, goose and kiro (#2391, #2399).
+- Prompts and seeded skills hand people the agent-fs live app link and create share links only when needed (#2400).
+- Skills: vendored ai-toolbox skills re-synced to a1e33bc (#2389).
+
+### Fixed
+- Workflows: cancelling a run cancels its whole child-run tree (steps, tasks, pending approvals and queued retries) in one transaction, and nothing started mid-cancel can land inside the cancelled tree. Repeating the cancel finishes child runs still open (#2377).
+- Workflows: a foreach agent-task item cut by a deploy drain gets the same one-shot retry as a plain agent-task node (#2370).
+- Session logs are read in write order, so the resume preamble's tail returns the last N lines instead of interleaved flushes (#2383).
+- Controller: the client detects a half-open socket and reconnects after a network cut longer than the API ping timeout (#2396).
+- Worker: poll claims stop during shutdown (#2395).
+- Docker runtime provider: deleting a runtime also removes its anonymous volumes (#2390).
+- Config: a script run's token reads its own held secrets unmasked on the config list and by-id routes, matching `/api/config/resolved` (#2393).
+- Dashboard: the Sessions header totals cost over the whole task chain, not only the root task (#2403); integrations with only advanced metadata no longer show as Configured, and Sessions copies inline env names (#2394).
+
+## [2.5.3] - 2026-10-24
+
 ### Added
 - Sessions: the sidebar source filter keeps an allowlist and shows only dashboard (`ui`) sessions by default; any other source, a new one included, stays off until ticked. `GET /api/sessions`, `GET /api/session-tree` and `POST /api/session-triage` take `showSource`; `hideSource` still works for older clients.
 - Approvals: a `config` question type asks a person to set one swarm config key or secret on the dashboard. The card shows whether the key is already set, offers keep, replace or skip, and takes non-secret values from options. Secrets go straight into encrypted swarm config; the request, workflow output and follow-up task carry only `{ key, scope, isSecret, status, updatedAt }`. The `workflow-iterate` and `turso-interaction` skills now ask for missing keys with a `config` question instead of chat or the Secrets page.
+- Extensions: `comms-adherence-gate` adds a plain-language dimension with its own `plainMode` (`off`, `shadow` or `enforce`, default `shadow`) and `plainThreshold` (default 0.25), and now also gates `slack-reply`, `slack-post`, `slack-start-thread` and `slack-update` on tasks the caller may post to, sharing the per-task block budget (#2360).
+- Dashboard: sessions, lists and pop-overs pretty-print raw task prompts. Thread context, sibling-task and steering wrappers render as collapsed sections, Slack mentions show as @Name, and truncated list previews are repaired (#2373, #2376).
+
+### Changed
+- Worker image bumps opencode to 2.1.4, dsh to 0.2.1-rc.3, amp, and `@anthropic-ai/sdk` to ^1.2.0 (#2369).
+- Docs: CHANGELOG.md is edited only in release PRs (#2382).
 
 ### Fixed
+- Workflows: a sub-workflow step keeps one child run per invocation across crashes and retries. Recovery re-claims the orphaned step row, and the child is keyed by parent step and attempt (migration 236) (#2364).
+- Chat SDK on Telegram: an addressed ask in a subscribed thread (mention, reply to the bot or DM) gets its 👀 or ⚡ reaction right away instead of at flush (#2368).
+- Worker entrypoint: the GitLab git credential helper setup is idempotent, so a restart with several helper values for the origin no longer stops the entrypoint (#2372).
+- Dashboard: the border beam stays a ring in Firefox instead of covering the whole card (#2371).
 - Skills: `skill-search` finds the obvious skill for natural-language queries. English stopwords such as "a", "how" and "do" no longer match the whole catalog, and a second FTS5 index over name and description (migration 241, backfilled) adds its BM25 score three times over, so a long SKILL.md body no longer buries a name or description hit. A query of only stopwords uses the substring match.
 - Sessions: Done holds through agent activity. A Done session came back to the Inbox on the next agent progress update; now it comes back only for a pending approval or a person's message created after it was marked Done.
 - Sessions: a person's steering message (steer or queue) on any task in a Done session now returns it to the Inbox, like a new follow-up does. Agent and system steering, cancelled messages, and messages from before the Done mark keep it Done.

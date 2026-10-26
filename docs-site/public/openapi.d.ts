@@ -3278,7 +3278,7 @@ export interface paths {
                         /** Format: email */
                         contactEmail?: string;
                         /** @enum {string} */
-                        contactFunction?: "engineer" | "eng_lead" | "founder" | "product" | "ops" | "other";
+                        contactFunction?: "engineer" | "eng_lead" | "founder" | "product" | "marketing" | "sales" | "research" | "ops" | "other";
                         quote?: string;
                     };
                 };
@@ -5616,6 +5616,129 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/codex-oauth/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List stored Codex ChatGPT accounts */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Stored account metadata */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            accounts: {
+                                slot: number;
+                                configKey: string;
+                                legacy: boolean;
+                                suffix: string | null;
+                                plan: string | null;
+                                email: string | null;
+                                /** @enum {string} */
+                                status: "ok" | "needs_login" | "unchecked";
+                            }[];
+                        };
+                    };
+                };
+                /** @description Caller cannot read all secrets */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/codex-oauth/accounts/{slot}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove a stored Codex ChatGPT account */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    slot: number | null;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Remaining accounts */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            accounts: {
+                                slot: number;
+                                configKey: string;
+                                legacy: boolean;
+                                suffix: string | null;
+                                plan: string | null;
+                                email: string | null;
+                                /** @enum {string} */
+                                status: "ok" | "needs_login" | "unchecked";
+                            }[];
+                        };
+                    };
+                };
+                /** @description Config administration and permission to read all secrets required */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description Account slot does not exist */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/oauth/keep-warm/codex": {
         parameters: {
             query?: never;
@@ -5693,7 +5816,7 @@ export interface paths {
         put?: never;
         /**
          * Send agent-fs comments to the swarm as one lead task
-         * @description Comb's 'Send to swarm'. The server reads each comment again from agent-fs with its bootstrap key, skips replies, resolved comments, and comments already sent, and creates ONE task for the lead. Each sent comment gets a `[comb:sent task=<id>]` reply from the swarm service account. A comment is sent at most once. When an earlier send lost its reply, the batch posts that reply again (`repaired`). Answers 404 while COMB_ENABLED is off.
+         * @description Comb's 'Send to swarm'. The server reads each comment again from agent-fs with its bootstrap key, skips replies, resolved comments, and comments already sent, and creates ONE task for the lead. Each sent comment gets a `[comb:sent task=<id>]` reply from the swarm service account. A comment is sent at most once. An optional `note` from the sender goes into the task text. When an earlier send lost its reply, the batch posts that reply again (`repaired`). Answers 404 while COMB_ENABLED is off.
          */
         post: {
             parameters: {
@@ -5709,6 +5832,7 @@ export interface paths {
                         driveId: string;
                         commentIds: string[];
                         scopePath: string;
+                        note?: string;
                     };
                 };
             };
@@ -5732,6 +5856,8 @@ export interface paths {
                                 id: string;
                                 taskId: string;
                             }[];
+                            /** @enum {string} */
+                            lead?: "online" | "offline" | "none";
                         };
                     };
                 };
@@ -5754,6 +5880,8 @@ export interface paths {
                                 id: string;
                                 taskId: string;
                             }[];
+                            /** @enum {string} */
+                            lead?: "online" | "offline" | "none";
                         };
                     };
                 };
@@ -5839,6 +5967,236 @@ export interface paths {
             };
         };
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/config/pool-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List credential pool suffixes and status */
+        get: {
+            parameters: {
+                query: {
+                    key: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Credential pool */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            key: string;
+                            /** @enum {string} */
+                            source: "stored" | "env" | "none";
+                            readOnly: boolean;
+                            keys: {
+                                index: number;
+                                suffix: string;
+                                /** @enum {string} */
+                                status: "ok" | "rejected" | "rate_limited" | "unchecked";
+                                error: string | null;
+                                checkedAt: string | null;
+                                rateLimitedUntil: string | null;
+                            }[];
+                        };
+                    };
+                };
+                /** @description Invalid pool variable */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description Secret read permission required */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Test and append keys to a credential pool */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        key: string;
+                        value: string;
+                        /** @description Base URL for the check only. Null tests the provider default. Omit to use the stored URL. */
+                        baseUrl?: string | null;
+                    };
+                };
+            };
+            responses: {
+                /** @description Updated credential pool and checks */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            key: string;
+                            /** @enum {string} */
+                            source: "stored" | "env" | "none";
+                            readOnly: boolean;
+                            keys: {
+                                index: number;
+                                suffix: string;
+                                /** @enum {string} */
+                                status: "ok" | "rejected" | "rate_limited" | "unchecked";
+                                error: string | null;
+                                checkedAt: string | null;
+                                rateLimitedUntil: string | null;
+                            }[];
+                            checks: {
+                                suffix: string;
+                                /** @enum {string} */
+                                result: "verified" | "rejected" | "not_tested";
+                                httpStatus: number | null;
+                                error: string | null;
+                            }[];
+                        };
+                    };
+                };
+                /** @description Invalid key */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description Config administration and permission to read all secrets required */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description Duplicate key or deployment env pool */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description Provider rejected a key. Nothing was saved. */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            error: string;
+                            checks: {
+                                suffix: string;
+                                /** @enum {string} */
+                                result: "verified" | "rejected" | "not_tested";
+                                httpStatus: number | null;
+                                error: string | null;
+                            }[];
+                        };
+                    };
+                };
+            };
+        };
+        /** Remove one credential pool member */
+        delete: {
+            parameters: {
+                query: {
+                    key: string;
+                    index?: number | null;
+                    suffix: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Updated credential pool */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            key: string;
+                            /** @enum {string} */
+                            source: "stored" | "env" | "none";
+                            readOnly: boolean;
+                            keys: {
+                                index: number;
+                                suffix: string;
+                                /** @enum {string} */
+                                status: "ok" | "rejected" | "rate_limited" | "unchecked";
+                                error: string | null;
+                                checkedAt: string | null;
+                                rateLimitedUntil: string | null;
+                            }[];
+                        };
+                    };
+                };
+                /** @description Invalid pool member */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description Config administration and permission to read all secrets required */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description The pool changed or comes from the deployment env */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
@@ -6068,6 +6426,78 @@ export interface paths {
             };
             responses: {
                 /** @description Key marked as rate-limited */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @enum {boolean} */
+                            success: true;
+                            message: string;
+                        };
+                    };
+                };
+                /** @description Validation error */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description Unauthorized */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/keys/report-validation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record live validation results for a credential pool */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        keyType: string;
+                        keys: {
+                            keyIndex: number;
+                            keySuffix: string;
+                            ok: boolean;
+                            httpStatus?: number;
+                        }[];
+                        scope?: string;
+                        scopeId?: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Validation recorded */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -6360,6 +6790,7 @@ export interface paths {
                             /** @enum {boolean} */
                             success: true;
                             availableIndices: number[];
+                            rejectedIndices?: number[];
                             totalKeys: number;
                             modelBlockedIndices?: number[];
                             earliestModelResetAt?: string | null;
@@ -6459,6 +6890,8 @@ export interface paths {
                                 lastSeatMismatchModel: string | null;
                                 consecutiveAuthFailures: number;
                                 lastAuthFailureAt: string | null;
+                                lastValidationError: string | null;
+                                lastValidationFailedAt: string | null;
                                 modelLimits: {
                                     model: string;
                                     window: string;
@@ -12030,7 +12463,7 @@ export interface paths {
         };
         /**
          * Identity + setup readiness + live activity for the swarm dashboard
-         * @description Single source of truth consumed by the UI home page. Identity comes from SWARM_* envs; setup milestones each emit `unverified | configured | verified`; automations report `running | needs_setup` from the same runtime preflight used at dispatch; activity counts agents alive in the last 5 min and tasks created in the last 24h; agent_fs reports whether AGENT_FS_API_URL is set, plus the Comb settings (COMB_ENABLED, the browser-facing agent-fs URL, the shared org and drive ids, and the agent-fs user id of the swarm service account); telemetry reports the effective ANONYMIZED_TELEMETRY opt-out state.
+         * @description Single source of truth consumed by the UI home page. Identity comes from SWARM_* envs; setup milestones each emit `unverified | configured | verified`; automations report `running | needs_setup` from the same runtime preflight used at dispatch; activity counts agents alive in the last 5 min, leads that can take work (status idle or busy), and tasks created in the last 24h; agent_fs reports whether AGENT_FS_API_URL is set, plus the Comb settings (COMB_ENABLED, the browser-facing agent-fs URL, the shared org and drive ids, and the agent-fs user id of the swarm service account); telemetry reports the effective ANONYMIZED_TELEMETRY opt-out state.
          */
         get: {
             parameters: {
@@ -12082,6 +12515,7 @@ export interface paths {
                             activity: {
                                 agents_online: number;
                                 leads_online: number;
+                                leads_ready: number;
                                 recent_tasks_count: number;
                             };
                             agent_fs: {
@@ -12346,6 +12780,8 @@ export interface paths {
                                     state: "unverified" | "configured" | "verified";
                                     workers: number;
                                     verifiedWorkers: number;
+                                    error: string | null;
+                                    warning: string | null;
                                 }[];
                                 embeddings: {
                                     configured: boolean;
@@ -12557,6 +12993,8 @@ export interface paths {
                                     state: "unverified" | "configured" | "verified";
                                     workers: number;
                                     verifiedWorkers: number;
+                                    error: string | null;
+                                    warning: string | null;
                                 }[];
                                 embeddings: {
                                     configured: boolean;
@@ -12851,6 +13289,7 @@ export interface paths {
                     status?: string;
                     agentId?: string;
                     scheduleId?: string;
+                    workflowRunId?: string;
                     /** @description Non-unique asset directory namespace (for example shared/ or personal/<user-id>/drafts/). Runtime write boundaries normalize and validate the canonical form. */
                     key?: string;
                     /** @description Non-unique asset directory namespace (for example shared/ or personal/<user-id>/drafts/). Runtime write boundaries normalize and validate the canonical form. */
@@ -19271,6 +19710,9 @@ export interface paths {
                     };
                     content: {
                         "application/json": {
+                            labels?: {
+                                [key: string]: string;
+                            };
                             groups: {
                                 total: number;
                                 unread: number;
@@ -19624,6 +20066,7 @@ export interface paths {
                             /** @enum {string} */
                             access: "owner" | "write" | "read";
                             owner: components["schemas"]["SessionOwner"];
+                            groupKey: string;
                             approvals?: {
                                 id: string;
                                 /** @enum {string} */
@@ -21818,6 +22261,23 @@ export interface paths {
                                     lastSuccessAt?: string;
                                 };
                                 contextVersions?: {
+                                    at: string;
+                                    rowsDeleted: number;
+                                    batches: number;
+                                    durationMs: number;
+                                    dryRun: boolean;
+                                    cumulativeRowsDeleted: number;
+                                    /** @enum {string} */
+                                    outcome: "converged" | "budget_exhausted" | "error";
+                                    drained: boolean;
+                                    backlogRemaining: number;
+                                    batchSize: number;
+                                    slowestStatementMs: number;
+                                    lastError?: string;
+                                    lastErrorAt?: string;
+                                    lastSuccessAt?: string;
+                                };
+                                scriptRuns?: {
                                     at: string;
                                     rowsDeleted: number;
                                     batches: number;
@@ -25168,7 +25628,10 @@ export interface paths {
         post: {
             parameters: {
                 query?: never;
-                header?: never;
+                header?: {
+                    /** @description Optional client-generated key, 1-255 visible ASCII characters (a UUID works). The first request the server accepts under a key creates one workflow; a retry with the same key and an equivalent body gets that request's status and body back (with `Idempotent-Replayed: true`) and changes nothing. The key is scoped to the caller's identity and this operation; it is not a credential. The same key with a different body is a 409. A request rejected before it is accepted (validation, auth, not found, disabled) does not use up the key. Accepted keys do not expire. */
+                    "Idempotency-Key"?: string;
+                };
                 path?: never;
                 cookie?: never;
             };
@@ -25276,8 +25739,26 @@ export interface paths {
                         };
                     };
                 };
-                /** @description Invalid definition */
+                /** @description Invalid definition, or a malformed Idempotency-Key */
                 400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description Idempotency-Key was already used for a different request */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description The workflow created under this Idempotency-Key was deleted */
+                410: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -25653,11 +26134,17 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Trigger a workflow execution */
+        /**
+         * Trigger a workflow execution
+         * @description With an `Idempotency-Key`, a retry returns the accepted run's `runId` and `skipped` without starting, resuming or waiting for anything, even after the workflow was disabled or edited and whatever state the run is in now.
+         */
         post: {
             parameters: {
                 query?: never;
-                header?: never;
+                header?: {
+                    /** @description Optional client-generated key, 1-255 visible ASCII characters (a UUID works). The first request the server accepts under a key starts one run; a retry with the same key and an equivalent body gets that request's status and body back (with `Idempotent-Replayed: true`) and changes nothing. The key is scoped to the caller's identity and this operation; it is not a credential. The same key with a different body is a 409. A request rejected before it is accepted (validation, auth, not found, disabled) does not use up the key. Accepted keys do not expire. */
+                    "Idempotency-Key"?: string;
+                };
                 path: {
                     id: string;
                 };
@@ -25677,7 +26164,7 @@ export interface paths {
                         };
                     };
                 };
-                /** @description Workflow is disabled */
+                /** @description Workflow is disabled, or a malformed Idempotency-Key */
                 400: {
                     headers: {
                         [name: string]: unknown;
@@ -25697,6 +26184,24 @@ export interface paths {
                 };
                 /** @description Workflow not found */
                 404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description Idempotency-Key was already used for a different request */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description The workflow triggered under this Idempotency-Key was deleted */
+                410: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -25833,10 +26338,15 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get a workflow run with steps (includes retry columns) */
+        /**
+         * Get a workflow run with steps (includes retry columns)
+         * @description Returns the run with its `context` and every step with its `input` by default. A step's `input` is a snapshot of the context when the step started, so in runs with loops (polling, `wait`, iterations) the response grows with steps × context size. Pass `fields=slim` to drop `run.context` and `steps[].input`; outputs, errors, diagnostics, retry fields and `parent` stay.
+         */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    fields?: "full" | "slim";
+                };
                 header?: never;
                 path: {
                     id: string;
@@ -25855,11 +26365,78 @@ export interface paths {
                             run: components["schemas"]["WorkflowRun"];
                             steps: components["schemas"]["WorkflowRunStep"][];
                             parent?: components["schemas"]["WorkflowRunParent"];
+                        } | {
+                            run: components["schemas"]["WorkflowRunSummary"];
+                            steps: components["schemas"]["WorkflowRunStepSlim"][];
+                            parent?: components["schemas"]["WorkflowRunParent"];
                         };
                     };
                 };
                 /** @description Run not found */
                 404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workflow-runs/{id}/tree": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a workflow run and every sub-workflow run below it
+         * @description Follows stored parent links (`parentStepId` → step → run) through every attempt of every step, terminal runs included. `runs` holds list rows without `context`, root first. `hasOpenWork` is true while any run in the tree is live, has a pending, running or waiting step, a queued retry, an open task or a pending approval; after a cancel it turns false once the tree has settled. Both come from one read snapshot. The tree is not paginated. Links that form a cycle or nest deeper than 32 levels return 409.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The run tree */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            rootRunId: string;
+                            runs: components["schemas"]["WorkflowRunSummary"][];
+                            hasOpenWork: boolean;
+                        };
+                    };
+                };
+                /** @description Run not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                /** @description Stored parent links form a cycle or nest past the depth bound */
+                409: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -26655,7 +27232,18 @@ export interface components {
             error: string | null;
             latency_ms: number;
             testedAt: number;
+            warning?: string;
+            keys?: components["schemas"]["AgentCredStatusKeyResult"][];
         } | null;
+        AgentCredStatusKeyResult: {
+            keyType: string;
+            index: number;
+            suffix: string;
+            ok: boolean;
+            error?: string;
+            httpStatus?: number;
+            latency_ms: number;
+        };
         /** @default null */
         AgentLatestModel: {
             model: string;
@@ -27954,6 +28542,28 @@ export interface components {
             workflowId: string;
             stepId: string;
             nodeId: string;
+        };
+        WorkflowRunStepSlim: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            runId: string;
+            nodeId: string;
+            nodeType: string;
+            /** @enum {string} */
+            status: "pending" | "running" | "waiting" | "completed" | "failed" | "skipped" | "cancelled";
+            output?: unknown;
+            error?: string;
+            startedAt: string;
+            finishedAt?: string;
+            /** @default 0 */
+            retryCount: number;
+            /** @default 3 */
+            maxRetries: number;
+            nextRetryAt?: string;
+            idempotencyKey?: string;
+            diagnostics?: string;
+            nextPort?: string;
         };
         WorkflowVersion: {
             /** Format: uuid */

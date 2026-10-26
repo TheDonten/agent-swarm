@@ -807,6 +807,7 @@ export interface TaskFilters {
   taskType?: string;
   tags?: string[];
   scheduleId?: string;
+  workflowRunId?: string;
   /** Exact canonical asset namespace. */
   key?: string;
   /** Canonical namespace subtree prefix. */
@@ -939,6 +940,11 @@ export async function getAllTasks(
   if (filters?.scheduleId) {
     conditions.push("scheduleId = ?");
     params.push(filters.scheduleId);
+  }
+
+  if (filters?.workflowRunId) {
+    conditions.push("workflowRunId = ?");
+    params.push(filters.workflowRunId);
   }
 
   if (filters?.key) {
@@ -1105,6 +1111,11 @@ export async function getTasksCount(
   if (filters?.scheduleId) {
     conditions.push("scheduleId = ?");
     params.push(filters.scheduleId);
+  }
+
+  if (filters?.workflowRunId) {
+    conditions.push("workflowRunId = ?");
+    params.push(filters.workflowRunId);
   }
 
   if (filters?.key) {

@@ -1,5 +1,6 @@
 import pkg from "../../../../package.json";
 import { defaultAssetKey } from "../../../assets/key";
+import { sessionSourceKey } from "../../../assets/source-key";
 import type { TaskTelemetryEvent, TaskTelemetryInput } from "../../../telemetry-trigger";
 import type {
   Agent,
@@ -89,7 +90,11 @@ export async function createTask(
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) RETURNING *`,
     [
       id,
-      defaultAssetKey("task", id),
+      sessionSourceKey({
+        id,
+        slackChannelId: options?.slackChannelId,
+        slackThreadTs: options?.slackThreadTs,
+      }) ?? defaultAssetKey("task", id),
       agentId,
       scrubSecrets(task),
       "pending",
@@ -657,7 +662,15 @@ export async function overwriteTerminalTaskResultText(
   return row ? rowToAgentTask(row) : task;
 }
 
-export async function cancelTask(id: string, reason?: string): Promise<AgentTask | null> {
+/**
+ * `cascadeDependents: false` skips the dependents sweep for a caller that
+ * already knows no task depends on this one (a bulk cancel looks once).
+ */
+export async function cancelTask(
+  id: string,
+  reason?: string,
+  options: { cascadeDependents?: boolean } = {},
+): Promise<AgentTask | null> {
   const oldTask = await getTaskById(id);
   if (!oldTask) return null;
 
@@ -736,10 +749,12 @@ export async function cancelTask(id: string, reason?: string): Promise<AgentTask
       );
     }
 
-    try {
-      await dependencies.cascadeFailDependents(id, "cancelled");
-    } catch (err) {
-      console.error("[cancelTask] cascade-fail dependents error:", err);
+    if (options.cascadeDependents !== false) {
+      try {
+        await dependencies.cascadeFailDependents(id, "cancelled");
+      } catch (err) {
+        console.error("[cancelTask] cascade-fail dependents error:", err);
+      }
     }
   }
 

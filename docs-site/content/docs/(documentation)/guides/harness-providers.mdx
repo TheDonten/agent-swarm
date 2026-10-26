@@ -71,6 +71,10 @@ After boot, a live provider change triggers a fresh credential report. A not-rea
 
 Ready workers retain the five-minute Bedrock enumeration refresh. `CRED_CHECK_DISABLE=1` disables both boot checks and steady-state refreshes.
 
+Codex subprocesses and Claude Managed sessions prefer the runner's selected task key over container credentials.
+If only a comma-separated container pool is available, these consumers select one member before provider authentication.
+Internal AI calls also select one member for each resolved provider key, including the Claude CLI fallback.
+
 ## 1. The `ProviderAdapter` contract
 
 ### Claude execution transports
@@ -187,7 +191,7 @@ The runner consumes these events (not the provider's native ones) to post progre
 |---|---|---|
 | [`src/providers/claude-adapter.ts`](https://github.com/desplega-ai/agent-swarm/blob/main/src/providers/claude-adapter.ts) | `Bun.spawn` of `claude` CLI with `--output-format stream-json`, JSONL stdout parsing | `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`, or a gateway / Foundry / Bedrock / Vertex route ([Model Gateways](/docs/guides/provider-auth/model-gateways#claude-code-through-a-gateway-or-cloud-provider)) |
 | [`src/providers/pi-mono-adapter.ts`](https://github.com/desplega-ai/agent-swarm/blob/main/src/providers/pi-mono-adapter.ts) | In-process via `createAgentSession` from `@earendil-works/pi-coding-agent`; no subprocess | `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` / `~/.pi/agent/auth.json` — or, when `BEDROCK_AUTH_MODE=sdk` or `MODEL_OVERRIDE=amazon-bedrock/*`, AWS SDK default chain (probed via `ListFoundationModels`; see [pi-mono + Amazon Bedrock](#pi-mono-amazon-bedrock-auth) below) |
-| [`src/providers/codex-adapter.ts`](https://github.com/desplega-ai/agent-swarm/blob/main/src/providers/codex-adapter.ts) | Parent adapter spawns `src/commands/codex-session-runner.ts`. The child starts one `codex app-server`, then bridges JSON-RPC notifications and requests to normalized events and controls over bidirectional JSONL. | `OPENAI_API_KEY` or ChatGPT OAuth stored in `swarm_config.codex_oauth` (see §6) |
+| [`src/providers/codex-adapter.ts`](https://github.com/desplega-ai/agent-swarm/blob/main/src/providers/codex-adapter.ts) | Parent adapter spawns `src/commands/codex-session-runner.ts`. The child starts one `codex app-server`, then bridges JSON-RPC notifications and requests to normalized events and controls over bidirectional JSONL. | `OPENAI_API_KEY` or ChatGPT OAuth stored in `swarm_config.codex_oauth` (see §6), or a gateway route ([Model Gateways](/docs/guides/provider-auth/model-gateways#codex-through-a-gateway)) |
 | [`src/providers/claude-managed-adapter.ts`](https://github.com/desplega-ai/agent-swarm/blob/main/src/providers/claude-managed-adapter.ts) | Anthropic SDK `client.beta.sessions.events.stream` (SSE); session executes in Anthropic's managed cloud sandbox, worker is a thin relay | `ANTHROPIC_API_KEY` plus pre-existing `MANAGED_AGENT_ID` + `MANAGED_ENVIRONMENT_ID` from one-time `claude-managed-setup` CLI (see §13) |
 | [`src/providers/devin-adapter.ts`](https://github.com/desplega-ai/agent-swarm/blob/main/src/providers/devin-adapter.ts) | Cognition Devin v3 REST API; worker polls the remote session | `DEVIN_API_KEY` + `DEVIN_ORG_ID` |
 | [`src/providers/opencode-adapter.ts`](https://github.com/desplega-ai/agent-swarm/blob/main/src/providers/opencode-adapter.ts) | OpenCode 2 embedded in-process via `@opencode/sdk` | Provider-specific API key, commonly `OPENROUTER_API_KEY` |
@@ -443,7 +447,7 @@ ampcode.com Settings → Security; see [Provider Auth: Amp](/docs/guides/provide
 in the worker environment or agent-scoped config. The adapter runs
 Amp's CLI in execute mode, `amp -x --stream-json --stream-json-input`, with the
 prompt as the first stdin message. The full worker image pins the CLI
-(`@ampcode/cli@0.0.1792756861-g6187a2`, SHA-512 verified, auto-update off); the
+(`@ampcode/cli@0.0.1792929650-g000512`, SHA-512 verified, auto-update off); the
 slim image does not include it. `AMP_BINARY` selects another trusted executable.
 Amp's licence is proprietary ([terms](https://ampcode.com/terms)): confirm it
 before publishing an image that contains the binary.

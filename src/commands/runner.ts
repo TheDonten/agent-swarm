@@ -1,5 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { deriveDefaultRoute } from "@desplega/model-routing";
 import type { TemplateResponse } from "../../templates/schema.ts";
 import {
   type Attributes,
@@ -119,7 +120,13 @@ import {
   prependContextPreamble,
 } from "./context-preamble.ts";
 import { reportCredentialOutcomeThenFinish } from "./credential-outcome-report.ts";
-import { type CredentialRefreshState, refreshCredentialStatus } from "./credential-refresh.ts";
+import {
+  type CredentialRefreshState,
+  credentialFingerprint,
+  recheckableFailures,
+  refreshCredentialStatus,
+  reportKeyValidation,
+} from "./credential-refresh.ts";
 import {
   awaitCredentials,
   BootMaxWaitExceededError,
@@ -832,6 +839,8 @@ export async function exitAfterTasksIfFinished(
  */
 export interface ResolvedEnvResult {
   env: Record<string, string | undefined>;
+  /** Full credential pools for live validation. Keep this environment in process only. */
+  credentialEnv: Record<string, string | undefined>;
   credentialSelections: CredentialSelection[];
   /** Raw config-row value, kept separate from the merged environment so an
    * actual worker environment variable retains precedence. */
@@ -1058,6 +1067,7 @@ export async function fetchResolvedEnv(
   });
   const effectiveModel = modelSelection.model || (env.MODEL_OVERRIDE as string | undefined) || "";
 
+  const credentialEnv = { ...env };
   const credentialSelections = await resolveCredentialPools(env, {
     apiUrl,
     apiKey,
@@ -1076,7 +1086,7 @@ export async function fetchResolvedEnv(
     allowlistProfile: sessionContext?.resolvedProfile,
   });
 
-  return { env, credentialSelections, resolvedProvider, scriptsOnlyConfigValue };
+  return { env, credentialEnv, credentialSelections, resolvedProvider, scriptsOnlyConfigValue };
 }
 
 /**
@@ -3368,6 +3378,8 @@ export interface PollOptions {
   pollTimeout: number;
   /** Push scheduling fetches once, then returns control to the runner. */
   singlePoll?: boolean;
+  /** Stop an open poll window before its next claim request. */
+  shouldStop?: () => boolean;
   /** Distinguishes a failed fetch from an empty successful response. */
   onPollFailure?: () => void;
   since?: string; // Optional: for filtering finished tasks
@@ -3685,6 +3697,7 @@ async function pollForTriggerOnce(opts: PollOptions): Promise<Trigger | null> {
   }
 
   while (Date.now() - startTime < opts.pollTimeout) {
+    if (opts.shouldStop?.()) return null;
     try {
       // Build URL with optional since parameter
       let url = `${opts.apiUrl}/api/poll`;
@@ -4340,7 +4353,9 @@ async function spawnProviderProcess(
   // config-store slot — gates whether `codexSlot` is set below (see
   // `CodexOAuthCredentialInfo`).
   let oauthIsPoolBacked = false;
-  if (adapter.name === "codex") {
+  // A gateway route uses no OAuth: no pool slot is picked, so no auth.json is
+  // materialised for a session whose traffic goes to the gateway.
+  if (adapter.name === "codex" && !deriveDefaultRoute("codex", freshEnv)) {
     const oauthInfo = await resolveCodexOAuthCredentialInfo(opts.apiUrl, opts.apiKey);
     oauthSelection = oauthInfo?.selection;
     oauthIsPoolBacked = oauthInfo?.isPoolBacked ?? false;
@@ -6040,7 +6055,10 @@ export async function runAgent(config: RunnerConfig, opts: RunnerOptions) {
     ready: null,
     lastRefreshAt: 0,
     inFlight: false,
+    fingerprint: null,
+    rejectedKeys: 0,
   };
+  let latestCredentialEnv: Record<string, string | undefined> | undefined;
 
   // Throttle for live HARNESS_PROVIDER reconciliation. Each reconciliation
   // calls `fetchResolvedEnv` which also re-resolves credential pools — we
@@ -6434,6 +6452,10 @@ export async function runAgent(config: RunnerConfig, opts: RunnerOptions) {
       credentialRefreshState.harnessProvider = state.harnessProvider;
       credentialRefreshState.ready = bootCredSnapshot?.ready ?? true;
       credentialRefreshState.lastRefreshAt = Date.now();
+      credentialRefreshState.fingerprint = credentialFingerprint(process.env);
+      credentialRefreshState.rejectedKeys = recheckableFailures(bootCredSnapshot?.liveTest);
+      const keys = bootCredSnapshot?.liveTest?.keys;
+      if (keys?.length) await reportKeyValidation(apiConfig, keys);
     } catch (error) {
       console.error(`[${role}] Failed to report credential readiness after recovery: ${error}`);
       process.exit(1);
@@ -7038,9 +7060,11 @@ export async function runAgent(config: RunnerConfig, opts: RunnerOptions) {
       try {
         const {
           env: freshEnv,
+          credentialEnv,
           resolvedProvider,
           scriptsOnlyConfigValue,
         } = await fetchResolvedEnv(apiUrl, apiKey, agentId);
+        latestCredentialEnv = credentialEnv;
         const nextScriptsOnly = resolveScriptsOnlyMode({
           env: process.env.SCRIPTS_ONLY_MCP,
           configValue: scriptsOnlyConfigValue,
@@ -7072,7 +7096,7 @@ export async function runAgent(config: RunnerConfig, opts: RunnerOptions) {
       apiConfig,
       credentialRefreshState,
       state.harnessProvider,
-      process.env,
+      latestCredentialEnv ?? process.env,
     ).catch((err) =>
       console.warn(`[${role}] cred_status post_task refresh failed (non-fatal): ${err}`),
     );
@@ -7125,7 +7149,7 @@ export async function runAgent(config: RunnerConfig, opts: RunnerOptions) {
       }
     }
 
-    // Only poll if we have capacity and the API is not draining
+    // Only poll if we have capacity and neither the API nor worker is draining
     const schedule = pushDelivery.schedule({
       mode: state.deliveryMode ?? "poll",
       push: deliveryChecks.push,
@@ -7134,7 +7158,7 @@ export async function runAgent(config: RunnerConfig, opts: RunnerOptions) {
         exitAfterTasks === null
           ? state.maxConcurrent
           : Math.min(state.maxConcurrent, Math.max(0, exitAfterTasks - state.tasksProcessed)),
-      draining: state.apiDraining,
+      draining: state.apiDraining || shuttingDown,
       lastPushPingAt,
       pollInterval: PollIntervalMs,
     });
@@ -7172,6 +7196,7 @@ export async function runAgent(config: RunnerConfig, opts: RunnerOptions) {
           runtimeInstanceId,
           pollTimeout: effectiveTimeout,
           singlePoll: schedule.singlePoll,
+          shouldStop: () => shuttingDown,
           onPollFailure,
           harnessProvider: state.harnessProvider,
           onApiDrainSignal: (draining) => applyApiDrainSignal(state, role, draining),
