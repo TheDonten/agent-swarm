@@ -36,6 +36,8 @@ export const argsSchema = z.object({
 });
 
 const NS = "dreaming-v2";
+// The agent-fs path hb-plan gives the heartbeat draft. lead-disk uses it in a Bash command, so nothing else passes.
+const DRAFT_PATH_RE = /^dreaming-v2\/drafts\/\d{4}-\d{2}-\d{2}\/[A-Za-z0-9-]{1,40}\/lead-heartbeat\.md$/;
 const PROCEDURES_SKILL = "lead-heartbeat-procedures";
 const TARGETS = { firstRunChars: 60000, steadyChars: 50000, trackedItemsChars: 25000, itemChars: 500, standingOrdersChars: 25000 };
 const MAX_MEMORIES = 10;
@@ -651,6 +653,10 @@ async function runScript(args: unknown, ctx: ScriptContext) {
       const draftSha = next ? await sha(next) : null;
       if (next && draft.draftSha && draft.draftSha !== draftSha) reasons.push(`draftSha mismatch: returned ${String(draft.draftSha).slice(0, 12)}, text hashes to ${String(draftSha).slice(0, 12)}`);
       if (next && !draft.draftPath) reasons.push("no draftPath (lead-disk needs the agent-fs copy)");
+      // The draft comes from a pool worker and lead-disk puts the path in a Lead shell command: accept only the
+      // plan's own path, and only in the shape the plan builds.
+      const pathOk = DRAFT_PATH_RE.test(String(plan.draftPath ?? "")) && draft.draftPath === plan.draftPath;
+      if (next && draft.draftPath && !pathOk) reasons.push(`draftPath is not the plan's draftPath: ${JSON.stringify(String(draft.draftPath).slice(0, 120))}`);
       const removed: any[] = Array.isArray(draft.removed) ? draft.removed : [];
       // Memories a removed pin may name: one that exists now (name or id), or one this draft harvests (apply stores it first).
       const harvest = (Array.isArray(draft.movedToMemory) ? draft.movedToMemory : []).filter((m: any) => /^[a-z0-9-]{3,90}$/.test(String(m?.name ?? "")) && String(m?.content ?? "").trim());
@@ -695,7 +701,7 @@ async function runScript(args: unknown, ctx: ScriptContext) {
         busy: busyRows,
         planSha: plan.planSha ?? null,
         draftSha,
-        draftPath: draft.draftPath ?? null,
+        draftPath: pathOk ? plan.draftPath : null,
         stats: {
           liveChars: live.length,
           draftChars: next.length,
