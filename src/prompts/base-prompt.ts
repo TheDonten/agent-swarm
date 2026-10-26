@@ -236,7 +236,13 @@ export const getBasePromptWithParts = async (
   const section = (id: string, chars: number): void => {
     parts.push({ kind: "system_section", id, label: id, chars });
   };
-  parts.push(...compositeParts(compositeEventType, compositeResult.segments, persona, grown()));
+  // The persona counts only as much as it adds to the rendered composite: an
+  // override that drops {{persona}} renders none of it, one that moves it
+  // elsewhere still counts it. The sections come from the render without it.
+  const sectionsResult = persona
+    ? await resolveTemplateAsync(compositeEventType, { ...vars, persona: "" })
+    : compositeResult;
+  parts.push(...compositeParts(compositeEventType, sectionsResult, grown()));
 
   // Experimental scripts-only MCP surface (code-mode): named swarm tools are
   // not registered, so tell the agent everything goes through script-run.
@@ -369,25 +375,28 @@ export const getBasePromptWithParts = async (
 };
 
 /**
- * Split the composite into its referenced templates and the persona. The
+ * Split the composite into the persona and its referenced templates.
+ * `sections` is the composite rendered with an empty persona, so the persona
+ * is the difference in collapsed length and no section is charged for it. The
  * composite's own glue entry absorbs the newlines seam collapsing removed, so
  * the parts sum to `total`, the composite's collapsed length.
  */
 function compositeParts(
   compositeEventType: string,
-  segments: { templateId: string; chars: number }[] | undefined,
-  persona: string,
+  sections: { text: string; segments?: { templateId: string; chars: number }[] },
   total: number,
 ): RequestCompositionPartInput[] {
-  const entries = (segments ?? [{ templateId: compositeEventType, chars: total }]).map(
-    (segment) => ({ ...segment }),
-  );
+  const personaChars = Math.max(0, total - collapseSeams(sections.text).length);
+  const sectionsTotal = total - personaChars;
+  const entries = (
+    sections.segments ?? [{ templateId: compositeEventType, chars: sectionsTotal }]
+  ).map((segment) => ({ ...segment }));
   // Glue first (the seam newlines live there), then the largest sections.
   const glue = entries.filter((entry) => entry.templateId === compositeEventType);
   const rest = entries
     .filter((entry) => entry.templateId !== compositeEventType)
     .sort((a, b) => b.chars - a.chars);
-  let excess = entries.reduce((sum, entry) => sum + entry.chars, 0) - total;
+  let excess = entries.reduce((sum, entry) => sum + entry.chars, 0) - sectionsTotal;
   for (const entry of [...glue, ...rest]) {
     if (excess === 0) break;
     const take = excess > 0 ? Math.min(excess, entry.chars) : excess;
@@ -395,15 +404,8 @@ function compositeParts(
     excess -= take;
   }
 
-  // The persona is interpolated into system.agent.role (or the whole
-  // composite when the resolver reported no segments).
-  const personaChars = collapseSeams(persona).length;
-  const personaHost =
-    entries.find((entry) => entry.templateId === "system.agent.role") ??
-    entries.find((entry) => entry.templateId === compositeEventType);
   const parts: RequestCompositionPartInput[] = [];
-  if (personaHost && personaChars > 0 && personaHost.chars >= personaChars) {
-    personaHost.chars -= personaChars;
+  if (personaChars > 0) {
     parts.push({
       kind: "persona",
       id: "persona",

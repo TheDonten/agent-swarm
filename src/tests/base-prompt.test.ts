@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   type BasePromptArgs,
   getBasePrompt,
@@ -7,7 +7,15 @@ import {
   truncateRepoClaudeMd,
 } from "../prompts/base-prompt";
 import { generateDefaultClaudeMd, generateDefaultIdentityMd } from "../prompts/defaults";
+import { configureDbResolver, resetDbResolver } from "../prompts/resolver";
 import type { ProviderTraits } from "../providers/types";
+import MAIN_BASELINE from "./fixtures/base-prompt-baseline.json";
+import {
+  BASELINE_ARGS,
+  BASELINE_DEPLOYMENTS,
+  BASELINE_SKILLS,
+  baselineKey,
+} from "./fixtures/base-prompt-baseline-cases";
 
 // ---------------------------------------------------------------------------
 // Fixtures and env handling
@@ -1165,55 +1173,77 @@ describe("getBasePrompt: harness tool discovery", () => {
 // ---------------------------------------------------------------------------
 
 describe("getBasePromptWithParts", () => {
-  const skills = [
-    { name: "alpha", description: "does alpha" },
-    { name: "beta", description: "does beta things" },
-  ];
-  const full: BasePromptArgs = {
-    ...minimalArgs,
-    name: "Tester",
-    description: "A test agent",
-    soulMd: "# Soul\n\nBe kind.\n\n\n\nReally.",
-    identityMd: "# Custom identity\n\nEdited.",
-    claudeMd: "# Notes\n\nCustom rules here.",
-    skillsSummary: skills,
-    mcpServers: ["context7"],
-  };
-  const matrix: Record<string, BasePromptArgs> = {
-    "claude worker": {
-      ...full,
-      provider: "claude",
-      traits: { ...localTraits, hasToolSearch: true, steerModes: ["queue"] },
-    },
-    "claude lead": { ...full, role: "lead", provider: "claude", traits: localTraits },
-    "scripts-only": { ...full, provider: "claude", scriptsOnly: true, traits: localTraits },
-    codex: { ...full, provider: "codex", traits: { ...localTraits, nativeSkillDiscovery: false } },
-    pi: { ...full, provider: "pi", traits: localTraits },
-    managed: { ...full, provider: "claude-managed", traits: managedTraits },
-    remote: { ...full, provider: "devin", traits: remoteTraits },
-    minimal: minimalArgs,
-  };
+  const matrix = BASELINE_ARGS;
   /** Parts that are text inside our prompt; skills_listing is harness-injected. */
   const inPrompt = (kind: string) => kind !== "skills_listing";
+  const promptChars = (parts: { kind: string; chars: number }[]) =>
+    parts.filter((part) => inPrompt(part.kind)).reduce((sum, part) => sum + part.chars, 0);
 
-  for (const deployment of ["plain", "slack + steering + agent-fs"]) {
+  for (const [deployment, env] of Object.entries(BASELINE_DEPLOYMENTS)) {
     for (const [name, args] of Object.entries(matrix)) {
-      test(`${deployment} / ${name}: byte-identical prompt, parts sum to its length`, async () => {
-        if (deployment !== "plain") {
-          enableSlack();
-          process.env.STEERING_ENABLED = "true";
-          process.env.AGENT_FS_API_URL = "http://agent-fs.test";
-        }
+      test(`${deployment} / ${name}: byte-identical to main's prompt, parts sum to its length`, async () => {
+        Object.assign(process.env, env);
         const { prompt, parts } = await getBasePromptWithParts(args);
-        expect(prompt).toBe(await getBasePrompt(args));
-        const total = parts
-          .filter((part) => inPrompt(part.kind))
-          .reduce((sum, part) => sum + part.chars, 0);
-        expect(total).toBe(prompt.length);
+        // Bytes rendered by main's getBasePrompt, not by the helper under test.
+        // Regenerate: bun scripts/capture-base-prompt-baseline.ts <checkout>
+        expect(prompt).toBe(MAIN_BASELINE[baselineKey(deployment, name)]!);
+        expect(promptChars(parts)).toBe(prompt.length);
         expect(parts.every((part) => part.chars > 0)).toBe(true);
       });
     }
   }
+
+  test("the baseline covers every case", () => {
+    const keys = Object.keys(BASELINE_DEPLOYMENTS).flatMap((deployment) =>
+      Object.keys(matrix).map((name) => baselineKey(deployment, name)),
+    );
+    expect(Object.keys(MAIN_BASELINE).sort()).toEqual(keys.sort());
+  });
+
+  describe("template overrides", () => {
+    const soulOnly: BasePromptArgs = { ...minimalArgs, soulMd: "ZZ" };
+    const overrides = (bodies: Record<string, string>) =>
+      configureDbResolver((eventType) => {
+        const body = bodies[eventType];
+        return body === undefined ? null : { template: { id: eventType, body, scope: "global" } };
+      });
+    const role = (parts: { id: string; chars: number }[]) =>
+      parts.find((part) => part.id === "system.agent.role")?.chars;
+
+    afterEach(() => resetDbResolver());
+
+    test("a role override that omits the persona counts no persona", async () => {
+      overrides({ "system.agent.role": "custom role" });
+      const { prompt, parts } = await getBasePromptWithParts(soulOnly);
+      expect(prompt).not.toContain("ZZ");
+      expect(parts.some((part) => part.kind === "persona")).toBe(false);
+      expect(role(parts)).toBe("custom role".length);
+      expect(promptChars(parts)).toBe(prompt.length);
+    });
+
+    test("a persona moved to another section is counted there, not taken from role", async () => {
+      overrides({
+        "system.agent.role": "custom role",
+        "system.agent.worker": "worker notes\n{{persona}}",
+      });
+      const { prompt, parts } = await getBasePromptWithParts(soulOnly);
+      expect(prompt).toContain("worker notes\n\nZZ\n");
+      expect(parts.find((part) => part.kind === "persona")?.chars).toBe("\nZZ\n".length);
+      expect(role(parts)).toBe("custom role".length);
+      expect(promptChars(parts)).toBe(prompt.length);
+    });
+
+    test("a persona rendered twice counts both copies", async () => {
+      overrides({ "system.agent.role": "custom role\n{{persona}}\n{{persona}}" });
+      const { prompt, parts } = await getBasePromptWithParts(soulOnly);
+      expect(prompt.split("ZZ").length - 1).toBe(2);
+      expect(parts.find((part) => part.kind === "persona")?.chars).toBeGreaterThanOrEqual(
+        2 * "ZZ".length,
+      );
+      expect(role(parts)).toBe("custom role\n\n".length);
+      expect(promptChars(parts)).toBe(prompt.length);
+    });
+  });
 
   test("splits the composite into its sections and the persona", async () => {
     const { parts } = await getBasePromptWithParts(matrix["claude worker"]!);
@@ -1231,7 +1261,7 @@ describe("getBasePromptWithParts", () => {
     expect(ids).toContain("system.agent.tool_discovery.search");
     expect(ids).toContain("system.agent.tools_skills");
     expect(parts.find((part) => part.kind === "claude_md")?.chars).toBeGreaterThan(
-      full.claudeMd!.length,
+      matrix["claude worker"]!.claudeMd!.length,
     );
   });
 
@@ -1240,7 +1270,10 @@ describe("getBasePromptWithParts", () => {
     const listing = claude.parts.find((part) => part.kind === "skills_listing");
     expect(listing).toMatchObject({
       fidelity: "estimate",
-      chars: "- alpha: does alpha\n- beta: does beta things\n".length,
+      chars: BASELINE_SKILLS.reduce(
+        (sum, skill) => sum + `- ${skill.name}: ${skill.description}\n`.length,
+        0,
+      ),
     });
 
     // Codex gets the list inside tools_skills, so it is not counted twice.
