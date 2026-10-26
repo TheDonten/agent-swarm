@@ -11,6 +11,7 @@ import { SEED_SCRIPTS, scriptsSeeder } from "../be/seed-scripts";
 import bootTriage from "../be/seed-scripts/catalog/boot-triage";
 import { renderCatalogReportPage } from "../be/seed-scripts/catalog/catalog-report";
 import compoundInsights from "../be/seed-scripts/catalog/compound-insights";
+import dreamingHeartbeat from "../be/seed-scripts/catalog/dreaming-heartbeat";
 import dreamingTrim from "../be/seed-scripts/catalog/dreaming-trim";
 import opsCatalogAudit, {
   renderPage as renderOpsCatalogAuditPage,
@@ -1265,5 +1266,162 @@ describe("dreaming-trim survival re-apply", () => {
     expect(out.reapplied).toEqual([
       { agentId: "a1", agentName: "victim", field: "claudeMd", ok: true },
     ]);
+  });
+});
+
+// dreaming-heartbeat apply runs as the Lead, but its draft (removed[], movedToMemory[].updateOf) comes from a worker
+// task. A draft that names an unrelated memory must never turn into a Lead memory_edit on that row.
+describe("dreaming-heartbeat pin harvest targets", () => {
+  const sha = async (s: string) =>
+    Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s))))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  const table = (objs: Record<string, unknown>[]) => {
+    const columns = Object.keys(objs[0] ?? {});
+    return { columns, rows: objs.map((o) => columns.map((c) => o[c])) };
+  };
+
+  async function runApply(opts: { victimKey: string; planHits: string[] }) {
+    const live =
+      "# HB\n\n## Tracked Items\n\n📌 **Pin A**: a long pinned note about pin a\n- **Item B**: open\n";
+    const next = "# HB\n\n## Tracked Items\n\n- **Item B**: open\n";
+    let hb = live;
+    const mem = new Map<string, Record<string, unknown>>();
+    const addRow = (id: string, name: string, content: string, key = `swarm/manual/${id}`) =>
+      mem.set(id, {
+        id,
+        key,
+        name,
+        scope: "swarm",
+        source: "manual",
+        agentId: null,
+        totalChunks: 1,
+        content,
+        expiresAt: null,
+        createdAt: new Date().toISOString(),
+      });
+    addRow("victim-1", "someone-else", "Curated text someone else owns.", opts.victimKey);
+    const edits: Record<string, unknown>[] = [];
+    const stores: Record<string, unknown>[] = [];
+    const ctx = {
+      swarm: {
+        async db_query({ sql, params = [] }: { sql: string; params?: unknown[] }) {
+          if (sql.includes("SELECT heartbeatMd FROM agents")) return table([{ heartbeatMd: hb }]);
+          if (sql.includes("FROM agent_memory WHERE id = ? OR")) {
+            const hit = [...mem.values()].find((r) => r.id === params[0] || r.name === params[1]);
+            return table(hit ? [hit] : []);
+          }
+          if (sql.includes("FROM agent_memory WHERE id = ? LIMIT 1")) {
+            const hit = mem.get(String(params[0]));
+            return table(hit ? [hit] : []);
+          }
+          if (sql.includes("SELECT 1 FROM agent_memory WHERE name = ?")) {
+            return table([...mem.values()].some((r) => r.name === params[0]) ? [{ x: 1 }] : []);
+          }
+          return table([]);
+        },
+        async kv_getOrNull() {
+          return null;
+        },
+        async kv_set() {
+          return {};
+        },
+        async kv_list() {
+          return { entries: [] };
+        },
+        async memory_edit(args: { memoryId: string; content: string }) {
+          edits.push(args);
+          const row = mem.get(args.memoryId);
+          if (row) row.content = args.content;
+          return { data: { success: true } };
+        },
+        async memory_store(args: { name: string; content: string }) {
+          stores.push(args);
+          const id = `new-${stores.length}`;
+          addRow(id, args.name, args.content);
+          return { data: { memoryIds: [id] } };
+        },
+        async profile_update(args: { heartbeatMd: string }) {
+          hb = args.heartbeatMd;
+          return {};
+        },
+        async task_send() {
+          return {};
+        },
+      },
+    };
+    const draftSha = await sha(next);
+    const out: any = await dreamingHeartbeat(
+      {
+        mode: "apply",
+        runId: "r1",
+        leadAgentId: "lead-1",
+        dryRun: false,
+        writes: "on",
+        plan: {
+          planSha: await sha(live),
+          candidates: {
+            pins: [
+              {
+                title: "Pin A",
+                key: "Pin A",
+                locked: false,
+                memoryHits: opts.planHits.map((id) => ({ id })),
+              },
+            ],
+          },
+        },
+        check: { ready: true, diskMode: "live" },
+        disk: { mode: "live", fields: [{ field: "heartbeatMd", diskAfterSha: draftSha }] },
+        draft: {
+          heartbeat: next,
+          removed: [
+            { title: "Pin A", probe: "📌 **Pin A**", memory: "victim-1", reason: "drained" },
+          ],
+          movedToMemory: [{ name: "hb-pin-a", content: "Pin A fact one.", updateOf: "victim-1" }],
+        },
+      },
+      ctx as any,
+    );
+    return { out, edits, stores, victim: mem.get("victim-1") };
+  }
+
+  test("refuses to edit a memory the plan never found for the pin", async () => {
+    const { out, edits, stores, victim } = await runApply({
+      victimKey: "swarm/manual/victim-1",
+      planHits: [],
+    });
+    expect(edits).toEqual([]);
+    expect(victim?.content).toBe("Curated text someone else owns.");
+    expect(stores.map((s) => s.name)).toEqual(["hb-pin-a"]);
+    expect(out.memories[0]).toMatchObject({
+      status: "stored-sibling",
+      target: "victim-1",
+      editRefused: "not a plan pin-candidate memory hit",
+    });
+    expect(out.status).toBe("applied");
+  });
+
+  test("refuses to edit a curated /longterm doc even when the plan found it", async () => {
+    const { out, edits } = await runApply({
+      victimKey: "/longterm/entities/people/someone",
+      planHits: ["victim-1"],
+    });
+    expect(edits).toEqual([]);
+    expect(out.memories[0]).toMatchObject({
+      status: "stored-sibling",
+      editRefused: "curated /longterm doc",
+    });
+  });
+
+  test("control: edits a plan pin-candidate hit in place", async () => {
+    const { out, edits, stores } = await runApply({
+      victimKey: "swarm/manual/victim-1",
+      planHits: ["victim-1"],
+    });
+    expect(edits.map((e) => e.memoryId)).toEqual(["victim-1"]);
+    expect(stores).toEqual([]);
+    expect(out.memories[0]).toMatchObject({ id: "victim-1", status: "updated" });
+    expect(out.status).toBe("applied");
   });
 });

@@ -862,6 +862,22 @@ async function runScript(args: unknown, ctx: ScriptContext) {
         const chunks = parts.map((p: any) => String(p.content ?? ""));
         return { id: String(row.id), chunks, text: chunks.join("\n"), expiring: parts.some((p: any) => p.expiresAt != null), complete: parts.length === total };
       };
+      // The draft comes from a worker task, so its updateOf (or a name it shares with an old row) is a claim, not
+      // authority. Only a row the Lead's plan found for an unlocked pin candidate may be edited in place, and never a
+      // curated /longterm doc; any other target gets a new sibling row that points back.
+      const editable = new Set<string>(
+        (Array.isArray(plan.candidates?.pins) ? plan.candidates.pins : [])
+          .filter((c: any) => c && !c.locked)
+          .flatMap((c: any) => (Array.isArray(c.memoryHits) ? c.memoryHits : []).map((h: any) => String(h?.id ?? "")))
+          .filter(Boolean),
+      );
+      const editRefusal = (hit: any) => {
+        const key = String(hit?.key ?? "");
+        if (key === "/longterm" || key.startsWith("/longterm/")) return "curated /longterm doc";
+        if (!editable.has(String(hit?.id ?? ""))) return "not a plan pin-candidate memory hit";
+        if (Number(hit?.totalChunks ?? 1) !== 1) return "multi-chunk";
+        return "";
+      };
       const pinTags = ["dreaming-v2", runId, "heartbeat", "heartbeat-pin"];
       // Pin key (entry name and its updateOf) -> the row that now holds the text, and the text whose facts must be in it.
       const held = new Map<string, { id: string; text: string }>();
@@ -882,13 +898,14 @@ async function runScript(args: unknown, ctx: ScriptContext) {
           if (isPin) for (const k of [name, target]) if (k) held.set(k, { id, text: content });
         };
         try {
-          const ex = await q(`SELECT id, name, totalChunks, content FROM agent_memory WHERE id = ? OR (name = ? AND chunkIndex = 0) ORDER BY createdAt DESC LIMIT 1`, [target || name, target || name]);
+          const ex = await q(`SELECT id, key, name, totalChunks, content FROM agent_memory WHERE id = ? OR (name = ? AND chunkIndex = 0) ORDER BY createdAt DESC LIMIT 1`, [target || name, target || name]);
           const hit = ex[0];
           if (hit && (isPin || target)) {
             // Only a document that already holds every harvested fact counts; a shared opening is not enough.
             const doc = await docOf(String(hit.id));
             if (doc && !lacking(doc.chunks, content).length) { keep(String(hit.id), "exists: already holds it"); continue; }
-            if (Number(hit.totalChunks ?? 1) === 1) {
+            const noEdit = editRefusal(hit);
+            if (!noEdit) {
               try {
                 const er: any = await ctx.swarm.memory_edit({ memoryId: String(hit.id), mode: "replace", content: `${String(hit.content).trimEnd()}\n\n${content.trim()}`, intent: `dreaming lane C ${runId}: drained heartbeat pin` });
                 const why = refusal(er);
@@ -899,11 +916,11 @@ async function runScript(args: unknown, ctx: ScriptContext) {
                 errors.push(`memory_edit ${name}: ${String(e?.message ?? e).slice(0, 160)}`);
               }
             }
-            // Multi-chunk rows cannot be edited (and an edit can be refused): keep the text in a sibling that points back.
+            // A row that may not be edited (or an edit that was refused): keep the text in a sibling that points back.
             const taken = (await q(`SELECT 1 FROM agent_memory WHERE name = ? LIMIT 1`, [name])).length > 0;
             const sibling = taken ? `${name.slice(0, 80)}-${date.slice(5)}` : name;
             const sid = await storeMemory(sibling, `Addendum to memory "${String(hit.name).slice(0, 120)}" (${hit.id}).\n\n${content}`, pinTags);
-            keep(sid, "stored-sibling", { target: String(hit.id), sibling });
+            keep(sid, "stored-sibling", { target: String(hit.id), sibling, ...(noEdit ? { editRefused: noEdit } : {}) });
             continue;
           }
           if (hit) { memories.push({ name, status: "exists" }); continue; }
