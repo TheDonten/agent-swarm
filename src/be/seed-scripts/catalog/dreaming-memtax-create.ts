@@ -58,6 +58,9 @@ export const argsSchema = z.object({
   // Seeded workflow: run from a Lead agent-task with args loaded from the run, or return that stored result.
   fromRun: z.boolean().optional(),
   loadResult: z.boolean().optional(),
+  // apply: stop writing after this many ms (default 90 s). fromRun sets 20 s: a script-run started by an agent
+  // has a 30 s wall clock, and a run killed mid-write would store no result.
+  writeBudgetMs: z.number().int().min(1000).max(90000).optional(),
 });
 
 const NS = "dreaming-v2";
@@ -1029,8 +1032,8 @@ async function runScript(args: unknown, ctx: ScriptContext) {
     if (live) {
       let n = 0;
       for (const x of planned) {
-        if (Date.now() - t0 > 90000) {
-          errors.push("write budget 90s reached; rest left for tomorrow");
+        if (Date.now() - t0 > (a.writeBudgetMs ?? 90000)) {
+          errors.push(`write budget ${Math.round((a.writeBudgetMs ?? 90000) / 1000)}s reached; rest left for tomorrow`);
           break;
         }
         n++;
@@ -1473,6 +1476,7 @@ async function fromRun(a: any, ctx: ScriptContext): Promise<any> {
   delete args.fromRun;
   delete args.loadResult;
   if (RUN_MODE) args.mode = RUN_MODE;
+  if (args.writeBudgetMs === undefined) args.writeBudgetMs = 20000;
   const missing: string[] = [];
   for (const [arg, nodeId, path, required] of RUN_PATHS) {
     if (args[arg] !== undefined) continue;
