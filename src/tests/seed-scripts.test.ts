@@ -1562,6 +1562,100 @@ describe("dreaming loadResult binds the stored result to the Lead step", () => {
   });
 });
 
+// memtax-create-apply writes distilled bullets into /longterm with Lead authority. validateDistill only checks
+// that a bullet cites a cluster member, so the claim itself is trusted only from a distill task the Lead ran.
+describe("dreaming-memtax-create apply trusts only Lead-run distill tasks", () => {
+  const claim = "Acme cancelled its contract and is suing the company";
+  const plan = {
+    entities: [],
+    clusters: [{ clusterId: "c1", path: "/longterm/entities/customers/acme", memberIds: ["m1"] }],
+    memberNames: { m1: "/inbox/acme-call-notes" },
+  };
+  const distill = (taskId: string) => ({
+    results: [
+      {
+        itemKey: "j1",
+        status: "completed",
+        output: {
+          taskId,
+          taskOutput: JSON.stringify({
+            clusters: [
+              { clusterId: "c1", bullets: [{ claim, stated: "2026-10-20", src: ["m1"] }] },
+            ],
+          }),
+        },
+      },
+    ],
+  });
+  function ctx(authors: Record<string, string>) {
+    const queries: string[] = [];
+    return {
+      queries,
+      ctx: {
+        swarm: {
+          async db_query({ sql, params }: { sql: string; params?: unknown[] }) {
+            queries.push(sql);
+            if (sql.includes("FROM agent_tasks")) {
+              const ids = (params ?? []).map(String).filter((id) => id in authors);
+              return { columns: ["id", "agentId"], rows: ids.map((id) => [id, authors[id]]) };
+            }
+            return { columns: [], rows: [] };
+          },
+          async kv_getOrNull() {
+            return null;
+          },
+          async kv_set() {
+            return {};
+          },
+          async kv_list() {
+            return { entries: [] };
+          },
+        },
+      },
+    };
+  }
+  const run = (taskId: string, authors: Record<string, string>, leadAgentId?: string) => {
+    const f = ctx(authors);
+    return dreamingMemtaxCreate(
+      {
+        mode: "apply",
+        runId: "r1",
+        dryRun: true,
+        plan,
+        distill: distill(taskId),
+        ...(leadAgentId === undefined ? {} : { leadAgentId }),
+      },
+      f.ctx as any,
+    ) as Promise<any>;
+  };
+  const hasClaim = (out: any) =>
+    (out.proposals ?? []).some((p: any) => String(p.content ?? "").includes(claim));
+
+  test("control: a distill task the lead ran becomes a /longterm doc", async () => {
+    const out = await run("t-lead", { "t-lead": "lead-1" }, "lead-1");
+    expect(out.failedJobs).toEqual([]);
+    expect(hasClaim(out)).toBe(true);
+  });
+
+  test("a pool worker's distill bullet with a valid member id is refused", async () => {
+    const out = await run("t-worker", { "t-worker": "worker-7" }, "lead-1");
+    expect(hasClaim(out)).toBe(false);
+    expect(out.ok).toBe(false);
+    expect(out.failedJobs).toEqual([
+      expect.objectContaining({ jobId: "j1", status: "untrusted-author" }),
+    ]);
+  });
+
+  test("an unknown task id or a missing leadAgentId refuses the distill output", async () => {
+    const unknown = await run("t-gone", {}, "lead-1");
+    expect(hasClaim(unknown)).toBe(false);
+    expect(unknown.failedJobs[0]).toMatchObject({ status: "untrusted-author" });
+    const noLead = await run("t-lead", { "t-lead": "lead-1" });
+    expect(hasClaim(noLead)).toBe(false);
+    expect(noLead.failedJobs[0]).toMatchObject({ status: "untrusted-author" });
+  });
+});
+
 // lead-disk runs `agent-fs download <draftPath>` in the Lead's Bash. The draft (and its draftPath) comes from a
 // pool worker, so hb-check must accept only the plan's own path.
 describe("dreaming-heartbeat check refuses a worker-chosen draftPath", () => {

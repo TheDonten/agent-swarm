@@ -4,7 +4,7 @@ Nightly self-improvement loop. The `dreaming-daily` schedule triggers it once a 
 
 How a night runs:
 
-- `gather` (script) reads the last day of tasks, agent profiles, skills, memory and workflow changes. It also resolves who runs each step: the `leadAgentId` input, or the swarm's lead when empty. Empty `coderAgentId` and `writerAgentId` leave those tasks in the pool for any worker.
+- `gather` (script) reads the last day of tasks, agent profiles, skills, memory and workflow changes. It also resolves who runs each step: the `leadAgentId` input, or the swarm's lead when empty. Empty `coderAgentId` and `writerAgentId` leave those tasks in the pool for any worker. `memtax-distill` always runs on the lead: its bullets become `/longterm` text that the lead writes.
 - Every active agent writes a short self-report. The lead synthesizes them into approved actions.
 - Lanes apply the approved actions: identity and memory ops (`apply`), profile trims (`trim-*`), the lead's heartbeat (`hb-*`), skills, script specs (`scriptify`), and the long-term memory taxonomy (`memtax-*`). Every write is capped, guarded, and logged to KV namespace `dreaming-v2` with its pre-image, so `dreaming-rollback` can undo a run.
 - `verify` checks each claim against the real writes. `learn` scores earlier changes. `publish` writes the report, and `slack` posts a short receipt.
@@ -1887,7 +1887,7 @@ Trim backups and heartbeat drafts use the assigned worker's default agent-fs dri
         "body": {
           "type": "agent-task",
           "config": {
-            "agentId": "{{writer}}",
+            "agentId": "{{lead}}",
             "modelTier": "smol",
             "tags": [
               "dreaming-v2",
@@ -1973,7 +1973,7 @@ Trim backups and heartbeat drafts use the assigned worker's default agent-fs dri
         "jobs": "memtax-create-plan.result.jobs",
         "runId": "run.id",
         "dryRun": "gather.result.dryRun",
-        "writer": "gather.result.writerAgentId"
+        "lead": "gather.result.leadAgentId"
       }
     },
     {

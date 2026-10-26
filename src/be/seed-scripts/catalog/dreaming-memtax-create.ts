@@ -42,6 +42,7 @@ export const argsSchema = z.object({
   classify: z.unknown().optional(), // memtax-classify foreach aggregate (B1)
   plan: z.unknown().optional(), // memtax-create-plan.result (apply)
   distill: z.unknown().optional(), // memtax-distill foreach aggregate (apply)
+  leadAgentId: z.string().optional(), // gather.result.leadAgentId: apply trusts only distill tasks this agent ran
   maxCreates: z.number().int().min(0).max(80).default(40),
   maxEdits: z.number().int().min(0).max(60).default(20),
   maxDeletes: z.number().int().min(0).max(20).default(5),
@@ -864,9 +865,20 @@ async function runScript(args: unknown, ctx: ScriptContext) {
     const distillRejected: Record<string, number> = {};
     const failedJobs: any[] = [];
     const flaggedHowto: string[] = [];
-    for (const x of parseForeach(a.distill)) {
+    // Distilled bullets become /longterm text written with Lead authority, and a valid source id says nothing about
+    // the claim. Only a distill task the Lead ran is trusted; a task anyone else ran (a pool worker) is refused.
+    const distillRuns = parseForeach(a.distill);
+    const leadId = String(a.leadAgentId ?? "").trim();
+    const taskIds = [...new Set(distillRuns.map((x) => x.taskId).filter((x): x is string => !!x))];
+    const authors = new Map<string, string>();
+    if (leadId && taskIds.length) for (const r of await q("distill-authors", `SELECT id, agentId FROM agent_tasks WHERE id IN (${taskIds.map(() => "?").join(", ")})`, taskIds)) authors.set(String(r.id), String(r.agentId ?? ""));
+    for (const x of distillRuns) {
       if (x.status !== "completed") {
         failedJobs.push({ jobId: x.key, status: x.status, error: x.error });
+        continue;
+      }
+      if (!leadId || !x.taskId || authors.get(x.taskId) !== leadId) {
+        failedJobs.push({ jobId: x.key, status: "untrusted-author", error: !leadId ? "no leadAgentId to check the distill task against" : `distill task ${x.taskId ?? "(none)"} was not run by the lead` });
         continue;
       }
       const v = validateDistill(x.out, clusterIndex);
@@ -1445,6 +1457,7 @@ const RUN_PATHS: Array<[string, string, string, boolean]> = [
   ["v3Writes", "gather", "$.result.v3Writes", true],
   ["plan", "memtax-create-plan", "$.result", true],
   ["distill", "memtax-distill", "$", false],
+  ["leadAgentId", "gather", "$.result.leadAgentId", true],
 ];
 
 const resultSummary = (r: any): Record<string, unknown> => {

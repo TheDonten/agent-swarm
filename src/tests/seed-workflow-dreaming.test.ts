@@ -107,4 +107,11 @@ describe("seeded dreaming workflow", () => {
       ).toEqual([`${id}-lead`]);
     }
   });
+
+  test("memtax-distill runs on the lead: its bullets become /longterm text the lead writes", () => {
+    const distill = byId.get("memtax-distill");
+    const body = distill?.config.body as { config?: { agentId?: unknown } } | undefined;
+    expect(body?.config?.agentId).toBe("{{lead}}");
+    expect(distill?.inputs?.lead).toBe("gather.result.leadAgentId");
+  });
 });
