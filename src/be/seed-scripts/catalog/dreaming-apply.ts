@@ -844,7 +844,7 @@ async function fromRun(a: any, ctx: ScriptContext): Promise<any> {
       }),
     );
     if (!r.length) {
-      if (required) missing.push(nodeId);
+      if (required && !missing.includes(nodeId)) missing.push(nodeId);
       args[arg] = "";
       continue;
     }
