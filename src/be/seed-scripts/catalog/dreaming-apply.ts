@@ -821,6 +821,22 @@ const resultSummary = (r: any): Record<string, unknown> => {
   return out;
 };
 
+// Key-sorted JSON, so the hash does not depend on the key order a KV round trip returns.
+const stableJson = (v: any): string =>
+  Array.isArray(v)
+    ? `[${v.map((x) => (x === undefined ? "null" : stableJson(x))).join(",")}]`
+    : v && typeof v === "object"
+      ? `{${Object.keys(v)
+          .sort()
+          .filter((k) => v[k] !== undefined)
+          .map((k) => `${JSON.stringify(k)}:${stableJson(v[k])}`)
+          .join(",")}}`
+      : (JSON.stringify(v) ?? "null");
+const resultSha256 = async (r: unknown): Promise<string> =>
+  Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(stableJson(r)))))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+
 async function fromRun(a: any, ctx: ScriptContext): Promise<any> {
   const runId = typeof a.runId === "string" ? a.runId.trim() : "";
   const key = `result:${runId}:${RUN_NODE}`;
@@ -829,11 +845,31 @@ async function fromRun(a: any, ctx: ScriptContext): Promise<any> {
   const stored: any = (await ctx.swarm.kv_getOrNull({ namespace: NS, key }))?.value;
   const have = stored && stored.runId === runId && stored.node === RUN_NODE;
   if (a.loadResult === true) {
-    if (have) return stored.result;
-    return { ok: false, loadResult: true, error: `no stored ${RUN_NODE} result for run ${runId}: the Lead step did not run the script, or it failed` };
+    if (!have) return { ok: false, loadResult: true, error: `no stored ${RUN_NODE} result for run ${runId}: the Lead step did not run the script, or it failed` };
+    // Any agent can write namespace dreaming-v2, so the KV entry alone proves nothing. Return it only when its hash
+    // equals the sha256 the Lead step returned, which the engine recorded as the `<node>-lead` step output.
+    const lead = rows(
+      await ctx.swarm.db_query({
+        sql: `SELECT json_extract(output, '$.taskOutput') o FROM workflow_run_steps WHERE runId = ? AND nodeId = ? AND status = 'completed' ORDER BY startedAt DESC LIMIT 1`,
+        params: [runId, `${RUN_NODE}-lead`],
+      }),
+    );
+    let pointer: any = lead[0]?.o;
+    if (typeof pointer === "string") {
+      try {
+        pointer = JSON.parse(pointer);
+      } catch {
+        pointer = null;
+      }
+    }
+    const want = pointer && typeof pointer.sha256 === "string" ? pointer.sha256 : "";
+    if (!want) return { ok: false, loadResult: true, error: `the ${RUN_NODE}-lead step returned no result sha256; the stored ${RUN_NODE} result is not trusted` };
+    if ((await resultSha256(stored.result)) !== want) return { ok: false, loadResult: true, error: `the stored ${RUN_NODE} result does not match the sha256 the ${RUN_NODE}-lead step returned; refusing it` };
+    return stored.result;
   }
-  // One write per run and node: a repeated Lead call returns the first result's pointer.
-  if (have) return { ok: stored.result?.ok !== false, fromRun: true, alreadyRan: true, stored: { namespace: NS, key }, summary: resultSummary(stored.result) };
+  // One write per run and node: a repeated Lead call returns the first result's pointer. It carries no sha256: an
+  // entry this call did not write may be forged, so loadResult refuses it instead of returning it.
+  if (have) return { ok: false, fromRun: true, alreadyRan: true, stored: { namespace: NS, key }, error: `a ${RUN_NODE} result for run ${runId} was already stored; nothing written`, summary: resultSummary(stored.result) };
   const args: any = { ...a };
   delete args.fromRun;
   delete args.loadResult;
@@ -862,7 +898,9 @@ async function fromRun(a: any, ctx: ScriptContext): Promise<any> {
   } catch (e: any) {
     return { ok: false, fromRun: true, error: `ran, but storing ${key} failed: ${String(e?.message ?? e).slice(0, 200)}`, summary: resultSummary(result) };
   }
-  return { ok: result?.ok !== false, fromRun: true, stored: { namespace: NS, key }, summary: resultSummary(result) };
+  // Hash the JSON form KV stores. loadResult checks the stored entry against this value from the Lead step output.
+  const sha256 = await resultSha256(JSON.parse(JSON.stringify(result ?? null)));
+  return { ok: result?.ok !== false, fromRun: true, stored: { namespace: NS, key }, sha256, summary: resultSummary(result) };
 }
 
 /** Dreaming lane A apply: guarded identity and memory ops from the approved synthesis; fromRun / loadResult for the seeded workflow. */

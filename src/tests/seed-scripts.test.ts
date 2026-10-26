@@ -11,7 +11,9 @@ import { SEED_SCRIPTS, scriptsSeeder } from "../be/seed-scripts";
 import bootTriage from "../be/seed-scripts/catalog/boot-triage";
 import { renderCatalogReportPage } from "../be/seed-scripts/catalog/catalog-report";
 import compoundInsights from "../be/seed-scripts/catalog/compound-insights";
+import dreamingApply from "../be/seed-scripts/catalog/dreaming-apply";
 import dreamingHeartbeat from "../be/seed-scripts/catalog/dreaming-heartbeat";
+import dreamingMemtaxCreate from "../be/seed-scripts/catalog/dreaming-memtax-create";
 import dreamingTrim from "../be/seed-scripts/catalog/dreaming-trim";
 import opsCatalogAudit, {
   renderPage as renderOpsCatalogAuditPage,
@@ -1423,5 +1425,139 @@ describe("dreaming-heartbeat pin harvest targets", () => {
     expect(stores).toEqual([]);
     expect(out.memories[0]).toMatchObject({ id: "victim-1", status: "updated" });
     expect(out.status).toBe("applied");
+  });
+});
+
+// Each Lead write is split into `<node>-lead` (an agent-task on the Lead that runs `fromRun`) and `<node>`
+// (a script node that runs `loadResult`). Any agent can write KV namespace dreaming-v2, so `loadResult` must
+// return a stored result only when it matches the sha256 the engine recorded as the `<node>-lead` step output.
+describe("dreaming loadResult binds the stored result to the Lead step", () => {
+  type Fake = { kv: Map<string, unknown>; leadOutput: unknown; ctx: unknown };
+  const table = (columns: string[], data: unknown[][]) => ({ columns, rows: data });
+  function fake(stepRows: Record<string, unknown>): Fake {
+    const f: Fake = { kv: new Map(), leadOutput: undefined, ctx: undefined };
+    f.ctx = {
+      swarm: {
+        async kv_getOrNull({ key }: { key: string }) {
+          return f.kv.has(key) ? { value: f.kv.get(key) } : null;
+        },
+        async kv_set({ key, value }: { key: string; value: unknown }) {
+          f.kv.set(key, JSON.parse(JSON.stringify(value)));
+          return {};
+        },
+        async kv_list() {
+          return { entries: [] };
+        },
+        async db_query({ sql, params }: { sql: string; params?: unknown[] }) {
+          const nodeId = String(params?.[params.length - 1] ?? "");
+          if (sql.includes("'$.taskOutput'")) {
+            return f.leadOutput === undefined
+              ? table(["o"], [])
+              : table(["o"], [[JSON.stringify(f.leadOutput)]]);
+          }
+          if (sql.includes("json_type(output") && nodeId in stepRows) {
+            const v = stepRows[nodeId];
+            const t = typeof v === "boolean" ? String(v) : Array.isArray(v) ? "array" : typeof v;
+            return table(["t", "v"], [[t, typeof v === "object" ? JSON.stringify(v) : v]]);
+          }
+          return table([], []);
+        },
+      },
+    };
+    return f;
+  }
+  const forged = (runId: string, node: string) => ({
+    runId,
+    node,
+    at: "2026-10-26T00:00:00.000Z",
+    result: { ok: true, forged: true, written: [{ id: "attacker-choice" }] },
+  });
+  const lanes = [
+    { name: "dreaming-apply", node: "apply", run: dreamingApply, extra: {} },
+    { name: "dreaming-trim", node: "trim-apply", run: dreamingTrim, extra: { mode: "apply" } },
+    {
+      name: "dreaming-heartbeat",
+      node: "hb-apply",
+      run: dreamingHeartbeat,
+      extra: { mode: "apply" },
+    },
+    {
+      name: "dreaming-memtax-create",
+      node: "memtax-create-apply",
+      run: dreamingMemtaxCreate,
+      extra: { mode: "apply" },
+    },
+  ];
+
+  for (const lane of lanes) {
+    test(`${lane.name}: a forged KV result with no Lead sha256 is refused`, async () => {
+      const f = fake({});
+      f.kv.set(`result:r1:${lane.node}`, forged("r1", lane.node));
+      f.leadOutput = { ok: true, fromRun: true, summary: {} };
+      const out: any = await lane.run(
+        { ...lane.extra, runId: "r1", loadResult: true },
+        f.ctx as any,
+      );
+      expect(out.ok).toBe(false);
+      expect(out.forged).toBeUndefined();
+      expect(out.error).toContain("no result sha256");
+    });
+
+    test(`${lane.name}: a KV result swapped after the Lead step is refused`, async () => {
+      const f = fake({});
+      f.kv.set(`result:r1:${lane.node}`, forged("r1", lane.node));
+      f.leadOutput = { ok: true, fromRun: true, sha256: "0".repeat(64) };
+      const out: any = await lane.run(
+        { ...lane.extra, runId: "r1", loadResult: true },
+        f.ctx as any,
+      );
+      expect(out.ok).toBe(false);
+      expect(out.forged).toBeUndefined();
+      expect(out.error).toContain("does not match");
+    });
+
+    test(`${lane.name}: a KV result planted before the Lead step gets no sha256 to vouch for it`, async () => {
+      const f = fake({});
+      f.kv.set(`result:r1:${lane.node}`, forged("r1", lane.node));
+      const pointer: any = await lane.run(
+        { ...lane.extra, runId: "r1", fromRun: true },
+        f.ctx as any,
+      );
+      expect(pointer).toMatchObject({ ok: false, alreadyRan: true });
+      expect(pointer.sha256).toBeUndefined();
+      f.leadOutput = pointer;
+      const out: any = await lane.run(
+        { ...lane.extra, runId: "r1", loadResult: true },
+        f.ctx as any,
+      );
+      expect(out.ok).toBe(false);
+      expect(out.forged).toBeUndefined();
+    });
+  }
+
+  test("control: dreaming-trim returns the result its Lead step stored, and refuses it once swapped", async () => {
+    const f = fake({ gather: true, "trim-plan": { targets: [] }, trim: [] });
+    const pointer: any = await dreamingTrim(
+      { mode: "apply", runId: "r2", fromRun: true },
+      f.ctx as any,
+    );
+    expect(pointer.fromRun).toBe(true);
+    expect(pointer.sha256).toMatch(/^[0-9a-f]{64}$/);
+    // The Lead returns the pointer unchanged; the engine records it as the trim-apply-lead step output.
+    f.leadOutput = pointer;
+    const stored = (f.kv.get("result:r2:trim-apply") as { result: unknown }).result;
+    const loaded: any = await dreamingTrim(
+      { mode: "apply", runId: "r2", loadResult: true },
+      f.ctx as any,
+    );
+    expect(loaded).toEqual(stored);
+
+    f.kv.set("result:r2:trim-apply", forged("r2", "trim-apply"));
+    const swapped: any = await dreamingTrim(
+      { mode: "apply", runId: "r2", loadResult: true },
+      f.ctx as any,
+    );
+    expect(swapped.ok).toBe(false);
+    expect(swapped.error).toContain("does not match");
   });
 });

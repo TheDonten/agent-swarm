@@ -9,7 +9,7 @@ How a night runs:
 - Lanes apply the approved actions: identity and memory ops (`apply`), profile trims (`trim-*`), the lead's heartbeat (`hb-*`), skills, script specs (`scriptify`), and the long-term memory taxonomy (`memtax-*`). Every write is capped, guarded, and logged to KV namespace `dreaming-v2` with its pre-image, so `dreaming-rollback` can undo a run.
 - `verify` checks each claim against the real writes. `learn` scores earlier changes. `publish` writes the report, and `slack` posts a short receipt.
 
-Writes that need Lead authority (`apply`, `trim-apply`, `hb-apply`, `memtax-create-apply`) run as agent-tasks on the lead. Each one runs its script with `fromRun: true`, and the next node returns the stored result.
+Writes that need Lead authority (`apply`, `trim-apply`, `hb-apply`, `memtax-create-apply`) run as agent-tasks on the lead. Each one runs its script with `fromRun: true` and returns a pointer with the result's sha256. The next node returns the stored result only when its hash matches that pointer, as the engine recorded it, so a forged `dreaming-v2` KV entry is refused.
 
 Inputs:
 
@@ -760,7 +760,7 @@ Trim backups and heartbeat drafts use the assigned worker's default agent-fs dri
           "dreaming-lead-write",
           "apply"
         ],
-        "template": "dreaming run {{runId}}: Lead write step `apply`. It needs Lead authority, so it runs in your session. Nothing here is owed to a human.\n\nMake exactly one tool call: `script-run` with name `dreaming-apply`, scope `global`, and args `{\"runId\":\"{{runId}}\",\"fromRun\":true}`.\nPass no other args. The script loads its inputs and the dry-run flag from this run's recorded steps, does the writes, stores its full result in KV namespace `dreaming-v2`, and returns a small pointer.\nDo not retry it, do not call any other write tool, and do not edit the script.\n\nReturn ONLY the script's result JSON, unchanged. If the call itself errors, return {\"ok\":false,\"error\":\"<message>\"}.",
+        "template": "dreaming run {{runId}}: Lead write step `apply`. It needs Lead authority, so it runs in your session. Nothing here is owed to a human.\n\nMake exactly one tool call: `script-run` with name `dreaming-apply`, scope `global`, and args `{\"runId\":\"{{runId}}\",\"fromRun\":true}`.\nPass no other args. The script loads its inputs and the dry-run flag from this run's recorded steps, does the writes, stores its full result in KV namespace `dreaming-v2`, and returns a small pointer.\nDo not retry it, do not call any other write tool, and do not edit the script.\n\nReturn ONLY the script's result JSON, unchanged: the next node checks its sha256. If the call itself errors, return {\"ok\":false,\"error\":\"<message>\"}.",
         "outputSchema": {
           "type": "object",
           "required": [
@@ -1335,7 +1335,7 @@ Trim backups and heartbeat drafts use the assigned worker's default agent-fs dri
           "dreaming-lead-write",
           "trim-apply"
         ],
-        "template": "dreaming run {{runId}}: Lead write step `trim-apply`. It needs Lead authority, so it runs in your session. Nothing here is owed to a human.\n\nMake exactly one tool call: `script-run` with name `dreaming-trim`, scope `global`, and args `{\"mode\":\"apply\",\"runId\":\"{{runId}}\",\"fromRun\":true}`.\nPass no other args. The script loads its inputs and the dry-run flag from this run's recorded steps, does the writes, stores its full result in KV namespace `dreaming-v2`, and returns a small pointer.\nDo not retry it, do not call any other write tool, and do not edit the script.\n\nReturn ONLY the script's result JSON, unchanged. If the call itself errors, return {\"ok\":false,\"error\":\"<message>\"}.",
+        "template": "dreaming run {{runId}}: Lead write step `trim-apply`. It needs Lead authority, so it runs in your session. Nothing here is owed to a human.\n\nMake exactly one tool call: `script-run` with name `dreaming-trim`, scope `global`, and args `{\"mode\":\"apply\",\"runId\":\"{{runId}}\",\"fromRun\":true}`.\nPass no other args. The script loads its inputs and the dry-run flag from this run's recorded steps, does the writes, stores its full result in KV namespace `dreaming-v2`, and returns a small pointer.\nDo not retry it, do not call any other write tool, and do not edit the script.\n\nReturn ONLY the script's result JSON, unchanged: the next node checks its sha256. If the call itself errors, return {\"ok\":false,\"error\":\"<message>\"}.",
         "outputSchema": {
           "type": "object",
           "required": [
@@ -1614,7 +1614,7 @@ Trim backups and heartbeat drafts use the assigned worker's default agent-fs dri
           "dreaming-lead-write",
           "hb-apply"
         ],
-        "template": "dreaming run {{runId}}: Lead write step `hb-apply`. It needs Lead authority, so it runs in your session. Nothing here is owed to a human.\n\nMake exactly one tool call: `script-run` with name `dreaming-heartbeat`, scope `global`, and args `{\"mode\":\"apply\",\"runId\":\"{{runId}}\",\"fromRun\":true}`.\nPass no other args. The script loads its inputs and the dry-run flag from this run's recorded steps, does the writes, stores its full result in KV namespace `dreaming-v2`, and returns a small pointer.\nDo not retry it, do not call any other write tool, and do not edit the script.\n\nReturn ONLY the script's result JSON, unchanged. If the call itself errors, return {\"ok\":false,\"error\":\"<message>\"}.",
+        "template": "dreaming run {{runId}}: Lead write step `hb-apply`. It needs Lead authority, so it runs in your session. Nothing here is owed to a human.\n\nMake exactly one tool call: `script-run` with name `dreaming-heartbeat`, scope `global`, and args `{\"mode\":\"apply\",\"runId\":\"{{runId}}\",\"fromRun\":true}`.\nPass no other args. The script loads its inputs and the dry-run flag from this run's recorded steps, does the writes, stores its full result in KV namespace `dreaming-v2`, and returns a small pointer.\nDo not retry it, do not call any other write tool, and do not edit the script.\n\nReturn ONLY the script's result JSON, unchanged: the next node checks its sha256. If the call itself errors, return {\"ok\":false,\"error\":\"<message>\"}.",
         "outputSchema": {
           "type": "object",
           "required": [
@@ -1988,7 +1988,7 @@ Trim backups and heartbeat drafts use the assigned worker's default agent-fs dri
           "dreaming-lead-write",
           "memtax-create-apply"
         ],
-        "template": "dreaming run {{runId}}: Lead write step `memtax-create-apply`. It needs Lead authority, so it runs in your session. Nothing here is owed to a human.\n\nMake exactly one tool call: `script-run` with name `dreaming-memtax-create`, scope `global`, and args `{\"mode\":\"apply\",\"runId\":\"{{runId}}\",\"fromRun\":true}`.\nPass no other args. The script loads its inputs and the dry-run flag from this run's recorded steps, does the writes, stores its full result in KV namespace `dreaming-v2`, and returns a small pointer.\nDo not retry it, do not call any other write tool, and do not edit the script.\n\nReturn ONLY the script's result JSON, unchanged. If the call itself errors, return {\"ok\":false,\"error\":\"<message>\"}.",
+        "template": "dreaming run {{runId}}: Lead write step `memtax-create-apply`. It needs Lead authority, so it runs in your session. Nothing here is owed to a human.\n\nMake exactly one tool call: `script-run` with name `dreaming-memtax-create`, scope `global`, and args `{\"mode\":\"apply\",\"runId\":\"{{runId}}\",\"fromRun\":true}`.\nPass no other args. The script loads its inputs and the dry-run flag from this run's recorded steps, does the writes, stores its full result in KV namespace `dreaming-v2`, and returns a small pointer.\nDo not retry it, do not call any other write tool, and do not edit the script.\n\nReturn ONLY the script's result JSON, unchanged: the next node checks its sha256. If the call itself errors, return {\"ok\":false,\"error\":\"<message>\"}.",
         "outputSchema": {
           "type": "object",
           "required": [

@@ -44,6 +44,7 @@ export const registerTriggerWorkflowTool = (server: McpServer) => {
           getExecutorRegistry(),
           {
             triggerType: "manual",
+            triggeredByAgentId: requestInfo.agentId,
             requestedByUserId:
               (await resolveTaskAuditUserId(requestInfo.sourceTaskId, requestInfo.agentId)) ??
               undefined,
