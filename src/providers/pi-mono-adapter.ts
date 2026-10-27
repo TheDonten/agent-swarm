@@ -383,14 +383,14 @@ export const SWARM_TOOL_NAMESPACE = { name: "agent-swarm" } as const;
 
 /**
  * `PI_TOOL_DEFERRAL`: hide non-core swarm tools, and installed MCP server
- * tools, behind pi's `tool_search`. On by default: the deferred schemas cost
- * more on every request than the one partial cache miss a load causes.
- * `false` declares every tool up front. Read from `process.env` by both the
+ * tools, behind pi's `tool_search`. Off by default while a pilot compares
+ * cost and cache hits against declaring every tool up front. Read from
+ * `process.env` by both the
  * adapter traits (which pick the prompt's tool-discovery line) and
  * `createSession`, so the prompt and the session always agree.
  */
 export function isPiToolDeferralEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return parseEnvFlag(env.PI_TOOL_DEFERRAL, true);
+  return parseEnvFlag(env.PI_TOOL_DEFERRAL, false);
 }
 
 /**

@@ -814,11 +814,11 @@ If the runner reuses an existing repo clone that has local changes, `ensureRepoF
   Template resolution goes over HTTP (`configureHttpResolver(apiUrl, apiKey)` at `runner.ts:2206`) to obey the API/worker DB boundary. Prompt files under `src/prompts/` must remain pure — no `bun:sqlite` or `src/be/db` imports. Enforced by `scripts/check-db-boundary.sh`.
 </Callout>
 
-Swarm tool-discovery guidance follows the adapter's `hasToolSearch` trait (false when omitted). Claude Code sets it to true for native ToolSearch. Codex, OpenCode, ACP, Claude Managed, Devin, and dsh set it to false. Amp sets it to true and gets its own text (`system.agent.tool_discovery.amp`): its MCP tools sit behind its own `tool_search` and `code_exec`, with dashes turned into underscores (`store-progress` is `store_progress`). pi sets it to the value of `PI_TOOL_DEFERRAL` (below, on by default). Providers with the trait off receive guidance that swarm tools are already in the tool list. This trait changes prompt text only, not tool registration.
+Swarm tool-discovery guidance follows the adapter's `hasToolSearch` trait (false when omitted). Claude Code sets it to true for native ToolSearch. Codex, OpenCode, ACP, Claude Managed, Devin, and dsh set it to false. Amp sets it to true and gets its own text (`system.agent.tool_discovery.amp`): its MCP tools sit behind its own `tool_search` and `code_exec`, with dashes turned into underscores (`store-progress` is `store_progress`). pi sets it to the value of `PI_TOOL_DEFERRAL` (below, off by default). Providers with the trait off receive guidance that swarm tools are already in the tool list. This trait changes prompt text only, not tool registration.
 
 ### pi tool deferral
 
-pi SDK sessions load none of pi's built-in extensions, so the adapter wires deferral itself. With `PI_TOOL_DEFERRAL` on (the default) the pi adapter:
+pi SDK sessions load none of pi's built-in extensions, so the adapter wires deferral itself. With `PI_TOOL_DEFERRAL=true` the pi adapter:
 
 - marks each swarm tool `exposure: "direct"` when it is in `CORE_TOOLS` (`src/tools/tool-config.ts`) or the server sent `_meta["anthropic/alwaysLoad"]` for it (task tool manifests), and `exposure: "deferred"` otherwise;
 - maps installed MCP servers with `exposure: "deferred"`, and the prompt's MCP-server line points at tool search;
@@ -827,7 +827,7 @@ pi SDK sessions load none of pi's built-in extensions, so the adapter wires defe
 
 Swarm tools carry `namespace: { name: "agent-swarm" }` and, when the server declares one, their `outputSchema`; results pass `structuredContent` through to pi alongside the text. Tool names do not change.
 
-The flag defaults to `true`. Loading a deferred tool changes the tool set mid-session, which costs one partial prompt-cache miss on that turn; the cache recovers on the next turn. Declaring every tool instead costs the full schema of the non-core tools on every request. Set `PI_TOOL_DEFERRAL=false` (globally, or agent-scoped for one agent) to declare every tool up front. The worker picks the value up on its next task.
+The flag defaults to `false`. Loading a deferred tool changes the tool set mid-session, which costs one partial prompt-cache miss on that turn; declaring every tool instead costs the full schema of the non-core tools on every request. Pilot it with `PI_TOOL_DEFERRAL=true` (globally, or agent-scoped for one agent) and compare cost per task and cache-read tokens as a share of input tokens against the days before. The worker picks the value up on its next task.
 
 ### pi codemode
 
