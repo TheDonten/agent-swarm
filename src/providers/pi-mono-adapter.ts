@@ -382,14 +382,15 @@ type ToolStructuredContent = NonNullable<AgentToolResult["structuredContent"]>;
 export const SWARM_TOOL_NAMESPACE = { name: "agent-swarm" } as const;
 
 /**
- * `PI_TOOL_DEFERRAL`: hide non-core swarm tools behind pi's `tool_search`.
- * Off by default until a pilot measures the prompt-cache cost of mid-session
- * tool-set changes. Read from `process.env` by both the adapter traits (which
- * pick the prompt's tool-discovery line) and `createSession`, so the prompt
- * and the session always agree.
+ * `PI_TOOL_DEFERRAL`: hide non-core swarm tools, and installed MCP server
+ * tools, behind pi's `tool_search`. On by default: the deferred schemas cost
+ * more on every request than the one partial cache miss a load causes.
+ * `false` declares every tool up front. Read from `process.env` by both the
+ * adapter traits (which pick the prompt's tool-discovery line) and
+ * `createSession`, so the prompt and the session always agree.
  */
 export function isPiToolDeferralEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return parseEnvFlag(env.PI_TOOL_DEFERRAL, false);
+  return parseEnvFlag(env.PI_TOOL_DEFERRAL, true);
 }
 
 /**
@@ -1040,6 +1041,8 @@ export class PiMonoSession implements ProviderSession {
   private emptyTurnReprompted = false;
   /** `abort()` was called: never prompt a session someone is trying to stop. */
   private abortRequested = false;
+  /** Pending `waitForIdle()` resolvers released when `agent_end` fires or `abort()` is called. */
+  private idleResolvers = new Set<() => void>();
   /** Removes this session's own models.json once the session ends. */
   private disposeModels: () => Promise<void>;
   /** Fed each assistant request's prompt size; steers the one-time context-bound note. */
@@ -1248,6 +1251,14 @@ export class PiMonoSession implements ProviderSession {
       case "tool_execution_end":
         if (this.pendingTerminalStoreProgress.delete(event.toolCallId) && !event.isError) {
           this.terminalStoreProgressDone = true;
+          const snapshotCost = this.safeBuildCostData(false);
+          if (snapshotCost) {
+            this.emit({
+              type: "result",
+              cost: snapshotCost,
+              isError: false,
+            });
+          }
         }
         this.emit({
           type: "raw_log",
@@ -1353,6 +1364,24 @@ export class PiMonoSession implements ProviderSession {
       };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
+      if (this.abortRequested && this.terminalStoreProgressDone) {
+        const cost = this.safeBuildCostData(false);
+        if (cost) {
+          this.emit({
+            type: "result",
+            cost,
+            isError: false,
+          });
+        }
+        return {
+          exitCode: 0,
+          sessionId: this._sessionId,
+          cost,
+          output: this.lastAssistantText || undefined,
+          isError: false,
+          appliedReasoningEffort: this.appliedReasoningEffort,
+        };
+      }
       // Defense-in-depth: AWS SDK failures surface as structured events (handled
       // above in runSession), not thrown exceptions, so this catch is for genuine
       // unexpected throws (MCP / transport / etc). Still classify in case an AWS
@@ -1367,9 +1396,11 @@ export class PiMonoSession implements ProviderSession {
       }
       this.emit({ type: "raw_stderr", content: `[pi-mono] Error: ${errorMessage}\n` });
 
+      const cost = this.safeBuildCostData(true);
       return {
         exitCode: 1,
         sessionId: this._sessionId,
+        cost,
         isError: true,
         errorCategory: awsCatchError?.category,
         failureReason: scrubSecrets(awsCatchError?.message ?? errorMessage),
@@ -1452,14 +1483,36 @@ export class PiMonoSession implements ProviderSession {
         return;
       }
 
-      // Subscribe and wait for agent_end
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        unsub();
+        this.idleResolvers.delete(finish);
+        resolve();
+      };
+
+      // Subscribe and wait for agent_end (or abort)
       const unsub = this.agentSession.subscribe((event) => {
         if (event.type === "agent_end") {
-          unsub();
-          resolve();
+          finish();
         }
       });
+      this.idleResolvers.add(finish);
+      if (this.abortRequested) {
+        finish();
+      }
     });
+  }
+
+  private safeBuildCostData(isError: boolean): CostData | undefined {
+    try {
+      const stats = this.agentSession.getSessionStats();
+      if (!stats) return undefined;
+      return { ...this.buildCostData(stats), isError };
+    } catch {
+      return undefined;
+    }
   }
 
   private buildCostData(stats: SessionStats): CostData {
@@ -1501,6 +1554,9 @@ export class PiMonoSession implements ProviderSession {
 
   async abort(): Promise<void> {
     this.abortRequested = true;
+    for (const resolve of [...this.idleResolvers]) {
+      resolve();
+    }
     await this.agentSession.abort();
   }
 
@@ -1710,12 +1766,15 @@ function escapeValues(values: unknown): Record<string, string> {
 /**
  * Map installed servers (`fetchInstalledMcpServers(..., "claude")` entries)
  * to pi MCP configs. pi speaks stdio and streamable HTTP; `sse` entries map to
- * HTTP, which is how the previous pi client already reached them. Tools stay
- * `direct`, as before: the prompt lists these servers as in the tool list.
+ * HTTP, which is how the previous pi client already reached them. With
+ * `deferred`, their tools load through `tool_search` like non-core swarm
+ * tools; otherwise they are declared up front.
  */
 export function toPiMcpServers(
   installed: Record<string, Record<string, unknown>> | null,
+  options: { deferred?: boolean } = {},
 ): Record<string, McpServerConfig> {
+  const exposure = options.deferred ? "deferred" : "direct";
   const servers: Record<string, McpServerConfig> = {};
   for (const [name, entry] of Object.entries(installed ?? {})) {
     if (typeof entry.command === "string") {
@@ -1724,14 +1783,14 @@ export function toPiMcpServers(
         command: entry.command,
         args: Array.isArray(entry.args) ? entry.args.map(String) : [],
         env: escapeValues(entry.env),
-        exposure: "direct",
+        exposure,
       };
     } else if (typeof entry.url === "string") {
       servers[name] = {
         type: "http",
         url: entry.url,
         headers: escapeValues(entry.headers),
-        exposure: "direct",
+        exposure,
       };
     }
   }
@@ -1886,7 +1945,7 @@ export class PiMonoAdapter implements ProviderAdapter {
       config.apiUrl && config.apiKey && config.agentId
         ? await fetchInstalledMcpServers(config.apiUrl, config.apiKey, config.agentId, "claude")
         : null;
-    const piMcpServers = toPiMcpServers(installedMcpServers);
+    const piMcpServers = toPiMcpServers(installedMcpServers, { deferred: deferTools });
     if (Object.keys(piMcpServers).length > 0) {
       console.log(
         `\x1b[2m[${config.role}]\x1b[0m Registering ${Object.keys(piMcpServers).length} installed MCP server(s) with pi`,

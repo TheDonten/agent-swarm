@@ -284,7 +284,7 @@ and the installed CLI's top-level and headless help.
 
 Set `HARNESS_PROVIDER=cursor` and `CURSOR_API_KEY` (a Cursor user or
 service-account key; Team Admin keys do not work). The adapter runs
-`@cursor/sdk` (pinned `1.0.40`) in-process: `Agent.create` with the local
+`@cursor/sdk` (pinned `1.1.0`) in-process: `Agent.create` with the local
 runtime on the task's cwd, then one `agent.send` per run. The agent loop and
 its file and shell tools run in the worker; inference always runs on Cursor's
 hosted models and bills the key's Cursor plan.
@@ -446,7 +446,7 @@ On success the pi wrapper also returns the server's `structuredContent` next to 
 
 **pi extension text for the model** goes through `sendNudge` (`pi.sendMessage`) in `src/providers/pi-mono-extension.ts`. pi runs extensions in-process and never feeds their stdout to the model, so a `console.log` there only reaches the worker log. `{ block, reason }` from `tool_call` also reaches the model. `context` fires before every LLM call; post-compaction text belongs on `session_compact`.
 
-**pi tool deferral** (`PI_TOOL_DEFERRAL`, default off): non-core swarm tools get `exposure: "deferred"` and the session adds pi's `tool_search`. The adapter's `traits` getter reads the same flag for `hasToolSearch`, so the prompt and the session agree. Keep both reads on `process.env`. Pilot procedure: the harness-providers guide, section "pi tool deferral".
+**pi tool deferral** (`PI_TOOL_DEFERRAL`, default on): non-core swarm tools and installed MCP servers get `exposure: "deferred"` and the session adds pi's `tool_search`. The adapter's `traits` getter reads the same flag for `hasToolSearch`, so the prompt and the session agree. Keep both reads on `process.env`. Rollback: `PI_TOOL_DEFERRAL=false`.
 
 **pi codemode** (`PI_CODEMODE`, default off): adds `createCodemodeExtension({ mode: "on", models })` (`models` follows `PI_CODEMODE_MODELS`, default off, only with codemode on; the usage of a script's `models.*` calls reaches `getSessionStats()` cost, proven in `src/tests/providers/pi-cost.test.ts`), wrapped by `createBoundedCodemodeExtension` (120 s per-script deadline, 32 nested calls, 4 concurrent), and `+codemode` on every pi session. Never switch to `mode: "only"`: lifecycle tools must stay directly callable.
 

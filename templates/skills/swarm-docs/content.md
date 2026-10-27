@@ -48,6 +48,7 @@ Fetch the page as markdown: `curl -fsSL https://docs.agent-swarm.dev/llms.mdx/do
 - [Email Domain Health](https://docs.agent-swarm.dev/docs/playbooks/email-domain-health). When: Someone wants the domains they send email from watched for SPF, DKIM, DMARC or blocklist problems.
 - [Open Oncall](https://docs.agent-swarm.dev/docs/playbooks/open-oncall). When: Someone wants alerts from PagerDuty, Datadog, Sentry or a webhook investigated and fixed, with a person approving each fix. Not when: A one-off question about a single incident.
 - [PR Review](https://docs.agent-swarm.dev/docs/playbooks/pr-review). When: Someone wants every pull request reviewed automatically before a person looks at it.
+- [Linear Delivery Loop](https://docs.agent-swarm.dev/docs/playbooks/linear-delivery-loop). When: Someone wants agents to take Linear issues through implementation, CI and review to merged pull requests, with a person approving each one. Template: `community/linear-delivery-loop`.
 - [Hot Patterns](https://docs.agent-swarm.dev/docs/playbooks/patterns). Reference.
 - [Pattern: Litmus Tests (LLM-as-Judge Quality Gates)](https://docs.agent-swarm.dev/docs/playbooks/patterns/litmus-tests). When: Someone wants one agent to check another agent's output against a rubric before it ships.
 - [Pattern: Drain Loops (Stacked PRs + Merge Loop)](https://docs.agent-swarm.dev/docs/playbooks/patterns/drain-loops). When: Someone wants a large change split into small stacked pull requests and merged in order.
@@ -74,6 +75,7 @@ Fetch the page as markdown: `curl -fsSL https://docs.agent-swarm.dev/llms.mdx/do
 - [Steer a Running Task](https://docs.agent-swarm.dev/docs/guides/task-steering). Reference.
 - [Claude Code Mod](https://docs.agent-swarm.dev/docs/guides/claude-code-mod). Reference.
 - [Observability with OpenTelemetry](https://docs.agent-swarm.dev/docs/guides/observability-opentelemetry). When: Someone wants swarm traces and metrics in SigNoz or another OpenTelemetry backend.
+- [Host Requirements & Disk Cleanup](https://docs.agent-swarm.dev/docs/guides/host-requirements). When: Someone asks how big a host their self-hosted swarm needs, or their disk is filling up with Docker images.
 - [Performance & Resource Sizing](https://docs.agent-swarm.dev/docs/guides/performance-resource-sizing). Reference.
 - [Cost & context computation](https://docs.agent-swarm.dev/docs/guides/cost-and-context-computation). Reference.
 - [Extensions](https://docs.agent-swarm.dev/docs/guides/extensions). Reference.
