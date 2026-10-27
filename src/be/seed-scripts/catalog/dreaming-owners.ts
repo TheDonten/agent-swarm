@@ -40,28 +40,34 @@ const rows = (r: any): any[] => {
 };
 
 // Lead agent id: the `leadAgentId` arg when set (workflow input), else the swarm's lead (agents.isLead = 1).
+// A failed lookup records an error and yields "", so the node keeps its never-throws contract.
 let LEAD = "";
-async function resolveLead(ctx: ScriptContext, id: unknown): Promise<string> {
+async function resolveLead(ctx: ScriptContext, id: unknown, errors: string[]): Promise<string> {
   if (typeof id === "string" && id.trim()) return id.trim();
-  const r = rows(await ctx.swarm.db_query({ sql: `SELECT id FROM agents WHERE isLead = 1 ORDER BY createdAt ASC LIMIT 1` }));
-  return String(r[0]?.id ?? "");
+  try {
+    const r = rows(await ctx.swarm.db_query({ sql: `SELECT id FROM agents WHERE isLead = 1 ORDER BY createdAt ASC LIMIT 1` }));
+    return String(r[0]?.id ?? "");
+  } catch (e: any) {
+    errors.push(`lead lookup: ${String(e?.message ?? e).slice(0, 200)}`);
+    return "";
+  }
 }
 
 /** Dreaming owners: sends follow-up tasks for proposals that need an owner. */
 export default async function (args: unknown, ctx: ScriptContext) {
   const a: any = args ?? {};
-  LEAD = await resolveLead(ctx, (args as any)?.leadAgentId);
+  const errors: string[] = [];
+  LEAD = await resolveLead(ctx, (args as any)?.leadAgentId, errors);
   const CODER = typeof a.coderAgentId === "string" ? a.coderAgentId.trim() : "";
   const dry = a.dryRun === true || a.dryRun === "true";
   const runId = typeof a.runId === "string" ? a.runId : "";
-  const errors: string[] = [];
   const synth = parse(a.synth);
   const apply = parse(a.apply) ?? {};
   const skills = parse(a.skills) ?? {};
   const scriptify = parse(a.scriptify) ?? {};
   const trim = parse(a.trim) ?? {};
   const actions: any[] = Array.isArray(synth?.actions) ? synth.actions : [];
-  if (!actions.length) return { mode: dry ? "dry-run" : "live", sent: [], wouldSend: [], handled: [], errors: synth ? [] : ["no synthesis output"] };
+  if (!actions.length) return { mode: dry ? "dry-run" : "live", sent: [], wouldSend: [], handled: [], errors: synth ? errors : [...errors, "no synthesis output"] };
 
   const ids = (arr: any): Set<string> => new Set((Array.isArray(arr) ? arr : []).map((x: any) => String(x?.actionId ?? x)));
   const appliedIds = new Set([...ids(apply.applied), ...ids(apply.wouldApply), ...ids(apply.alreadyApplied)]);
@@ -72,7 +78,13 @@ export default async function (args: unknown, ctx: ScriptContext) {
   const built = (scriptify.built ?? []).filter((b: any) => b?.status === "built" || b?.status === "dry-run");
   const builtIds = new Set(built.map((b: any) => String(b.actionId)));
 
-  const agents = rows(await ctx.swarm.db_query({ sql: `SELECT id, name FROM agents WHERE name NOT LIKE 'ext:%'` }));
+  let agents: any[] = [];
+  try {
+    agents = rows(await ctx.swarm.db_query({ sql: `SELECT id, name FROM agents WHERE name NOT LIKE 'ext:%'` }));
+  } catch (e: any) {
+    // Without the roster, owners fall back to Lead / coder defaults.
+    errors.push(`agent lookup: ${String(e?.message ?? e).slice(0, 200)}`);
+  }
   const resolve = (o: unknown): string | null => {
     const s = String(o ?? "").trim();
     if (!s) return null;
@@ -134,6 +146,10 @@ export default async function (args: unknown, ctx: ScriptContext) {
     const row = { owner, ownerName: name, actionIds: list.map((x) => x.actionId) };
     if (dry) {
       wouldSend.push({ ...row, preview: task.slice(0, 400) });
+      continue;
+    }
+    if (!owner) {
+      errors.push(`no owner for ${row.actionIds.length} item(s): lead unresolved`);
       continue;
     }
     const key = `owners:${runId}:${owner}`;
