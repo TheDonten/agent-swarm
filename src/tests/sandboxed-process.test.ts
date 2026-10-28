@@ -104,25 +104,35 @@ describe("buildSandboxedCommand spawn mode", () => {
   });
 
   test.skipIf(SKIP_SANDBOX_SPAWN_TESTS)(
-    "passes literal env values without inheriting the parent environment",
+    "preserves the Bun.spawn env and does not inject the builder env",
     async () => {
       const saved = process.env.SANDBOX_SPAWN_PARENT_SECRET;
       process.env.SANDBOX_SPAWN_PARENT_SECRET = "example-parent-only-secret";
+      // Distinct sentinels: a test that puts the same value in both places
+      // passes even when spawn mode ignores the builder argument, which is
+      // the contract. Builder values must stay off argv and out of the child.
+      // The child sees only what the caller passes to Bun.spawn.
+      const builderOnly = "builder-only-value";
+      const spawnOnly = "quotes'\" $(printf injected)\nnext line";
       try {
         const command = buildSandboxedCommand(
           ["bash", "-c", 'printf \'[%s][%s]\' "$CUSTOM_SETTING" "$SANDBOX_SPAWN_PARENT_SECRET"'],
-          { ...TEST_ENV, CUSTOM_SETTING: "quotes'\" $(printf injected)\nnext line" },
+          { ...TEST_ENV, CUSTOM_SETTING: builderOnly },
           DEFAULT_SANDBOX_LIMITS,
           "spawn",
         );
+        expect(command.join(" ")).not.toContain(builderOnly);
+        expect(command.join(" ")).not.toContain("printf injected");
+
+        const withoutSpawnValue = await runChild(command, { env: TEST_ENV });
+        expectChildOk(withoutSpawnValue, "sandbox without explicit custom spawn env");
+        expect(withoutSpawnValue.stdout).toBe("[][]");
+
         const result = await runChild(command, {
-          env: {
-            ...TEST_ENV,
-            CUSTOM_SETTING: "quotes'\" $(printf injected)\nnext line",
-          },
+          env: { ...TEST_ENV, CUSTOM_SETTING: spawnOnly },
         });
         expectChildOk(result, "explicit sandbox spawn env");
-        expect(result.stdout).toBe("[quotes'\" $(printf injected)\nnext line][]");
+        expect(result.stdout).toBe(`[${spawnOnly}][]`);
       } finally {
         if (saved === undefined) delete process.env.SANDBOX_SPAWN_PARENT_SECRET;
         else process.env.SANDBOX_SPAWN_PARENT_SECRET = saved;
