@@ -38,7 +38,7 @@ function withPlatform<T>(platform: NodeJS.Platform, fn: () => T): T {
 // ─── sandboxSpawnEnv (Codex PRRT_kwDOQr3Tmc6XCRuu — win32 env passthrough) ──
 
 describe("sandboxSpawnEnv", () => {
-  test("POSIX: returns only PATH — buildSandboxedCommand's env -i prelude injects the rest", () => {
+  test("POSIX: returns only PATH for the legacy inline-env command", () => {
     const env = withPlatform("linux", () =>
       sandboxSpawnEnv({ PATH: "/usr/bin:/bin", HOME: "/tmp", SWARM_SCRIPT_TMPDIR: "/tmp/x" }),
     );
@@ -58,7 +58,7 @@ describe("sandboxSpawnEnv", () => {
     expect(env).not.toBe(fullEnv);
   });
 
-  test("win32: buildSandboxedCommand no-ops (matches existing native.ts behavior), so sandboxSpawnEnv is the only place the harness env reaches the child", () => {
+  test("win32: buildSandboxedCommand no-ops (matches existing native.ts behavior)", () => {
     const cmd = withPlatform("win32", () =>
       buildSandboxedCommand(["bun", "run", "harness.ts"], {
         PATH: "C:\\Windows",
@@ -67,6 +67,69 @@ describe("sandboxSpawnEnv", () => {
     );
     expect(cmd).toEqual(["bun", "run", "harness.ts"]);
   });
+});
+
+describe("buildSandboxedCommand spawn mode", () => {
+  test.skipIf(SKIP_SANDBOX_SPAWN_TESTS)(
+    "does not execute BASH_ENV before installing the sandbox limits",
+    async () => {
+      const startupFile = `${process.env.TMPDIR ?? "/tmp"}/sandbox-startup-${crypto.randomUUID()}.sh`;
+      await Bun.write(startupFile, "exit 37\n");
+      try {
+        const env = { ...TEST_ENV, BASH_ENV: startupFile };
+        const command = buildSandboxedCommand(
+          ["printf", "ready"],
+          env,
+          DEFAULT_SANDBOX_LIMITS,
+          "spawn",
+        );
+        const result = await runChild(command, { env });
+        expectChildOk(result, "spawn-mode sandbox with BASH_ENV");
+        expect(result.stdout).toBe("ready");
+      } finally {
+        await Bun.file(startupFile).delete();
+      }
+    },
+    CHILD_PROCESS_TEST_BUDGET_MS,
+  );
+
+  test("keeps environment values out of every command argument", () => {
+    const command = buildSandboxedCommand(
+      ["python3", "-c", "pass"],
+      { ...TEST_ENV, CUSTOM_CREDENTIAL: "example-secret-not-for-command-line" },
+      DEFAULT_SANDBOX_LIMITS,
+      "spawn",
+    );
+    expect(command.join(" ")).not.toContain("example-secret-not-for-command-line");
+  });
+
+  test.skipIf(SKIP_SANDBOX_SPAWN_TESTS)(
+    "passes literal env values without inheriting the parent environment",
+    async () => {
+      const saved = process.env.SANDBOX_SPAWN_PARENT_SECRET;
+      process.env.SANDBOX_SPAWN_PARENT_SECRET = "example-parent-only-secret";
+      try {
+        const command = buildSandboxedCommand(
+          ["bash", "-c", 'printf \'[%s][%s]\' "$CUSTOM_SETTING" "$SANDBOX_SPAWN_PARENT_SECRET"'],
+          { ...TEST_ENV, CUSTOM_SETTING: "quotes'\" $(printf injected)\nnext line" },
+          DEFAULT_SANDBOX_LIMITS,
+          "spawn",
+        );
+        const result = await runChild(command, {
+          env: {
+            ...TEST_ENV,
+            CUSTOM_SETTING: "quotes'\" $(printf injected)\nnext line",
+          },
+        });
+        expectChildOk(result, "explicit sandbox spawn env");
+        expect(result.stdout).toBe("[quotes'\" $(printf injected)\nnext line][]");
+      } finally {
+        if (saved === undefined) delete process.env.SANDBOX_SPAWN_PARENT_SECRET;
+        else process.env.SANDBOX_SPAWN_PARENT_SECRET = saved;
+      }
+    },
+    CHILD_PROCESS_TEST_BUDGET_MS,
+  );
 });
 
 describe("buildSandboxedCommand runtime-aware limits", () => {
